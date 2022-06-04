@@ -1,0 +1,20 @@
+[package]
+name = "hodor-program"
+version = "0.1.0"
+authors = ["mardragon <mrmardragon@gmail.com>"]
+description = "Hodor program"
+edition = "2021"
+keywords = ["solana", "hodor", "program"]
+license = "Apache-2.0"
+publish = false
+
+[features]
+no-entrypoint = []
+
+[dependencies]
+solana-program = "1.10.23"
+spl-token = { version = "3.3.0", features = ["no-entrypoint"] }
+arrayref = "0.3.6"
+
+[lib]
+crate-type = ["cdylib", "lib"]
