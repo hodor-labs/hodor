@@ -16,8 +16,16 @@ pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], instruction_data: 
             msg!("Swap:CreatePool");
             process_create_pool(program_id, accounts, seed)
         }
-        SwapInstruction::Deposit { } => {
+        SwapInstruction::Swap {} => {
+            msg!("Swap:Swap");
+            todo!()
+        }
+        SwapInstruction::Deposit {} => {
             msg!("Swap:Deposit");
+            todo!()
+        }
+        SwapInstruction::Withdraw {} => {
+            msg!("Swap:Withdraw");
             todo!()
         }
     }
@@ -89,7 +97,7 @@ fn process_create_pool(program_id: &Pubkey, accounts: &[AccountInfo], seed: [u8;
         &lp_mint_account,
         &swap_state_info.key,
         None, // todo: consider giving it to pool account (controllable later through DAO)
-        9, // todo: decide
+        6, // todo: decide
     )?;
 
     invoke(

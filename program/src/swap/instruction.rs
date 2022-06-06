@@ -19,19 +19,26 @@ pub enum SwapInstruction {
         // todo feeRate - %
     },
 
-    // 01
-    // Swap
+    // 11
+    Swap {
+        // todo: slippage
+    },
 
-    // 02
+    // 12
     // Deposit into pool
     Deposit {
         // todo: slippage control
+    },
+
+    // 13
+    // Withdraw
+    Withdraw {
+        // todo: slippage control ?
     },
 }
 
 // todo: unit test pack/unpack swap instruction
 impl SwapInstruction {
-
     const MODULE_TAG: u8 = 1;
 
     pub fn pack(&self) -> Vec<u8> {
@@ -43,7 +50,13 @@ impl SwapInstruction {
                 buffer.push(0);
                 buffer.extend_from_slice(seed);
             }
+            SwapInstruction::Swap {} => {
+                todo!()
+            }
             SwapInstruction::Deposit {} => {
+                todo!()
+            }
+            SwapInstruction::Withdraw {} => {
                 todo!()
             }
         };

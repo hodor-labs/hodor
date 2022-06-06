@@ -9,6 +9,12 @@ use hodor_program::swap::instruction::SwapInstruction;
 use crate::{Context, Error};
 
 pub fn create_pool(context: Context, matches: &ArgMatches) -> Result<(), Error> {
+    let mint_a = Pubkey::from_str(matches.value_of("TOKEN-A").unwrap())
+        .map_err(|_| format!("Invalid token address"))?;
+
+    let mint_b = Pubkey::from_str(matches.value_of("TOKEN-B").unwrap())
+        .map_err(|_| format!("Invalid token address"))?;
+
     // todo: should be part of context
     let payer_keypair = read_keypair_file(context.cli_config.keypair_path)?;
 
@@ -29,10 +35,7 @@ pub fn create_pool(context: Context, matches: &ArgMatches) -> Result<(), Error> 
     println!("Seed: {}", Pubkey::new(&seed));
     println!("State account: {}", state_account);
 
-    let mint_a = Pubkey::from_str("7KzorLNmEaQzPEwPf5GC9dctpJ4dFn2FB8kaJUPB8nrX").unwrap();
     println!("Mint A: {}", mint_a);
-
-    let mint_b = Pubkey::from_str("82UeH1Qg7XkN16XCkDAK4RQsCTqcogaGpxrukLZmcBzc").unwrap();
     println!("Mint B: {}", mint_b);
 
     let seed_a = [state_account.as_ref(), b"A"];

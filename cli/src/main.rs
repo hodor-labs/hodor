@@ -29,17 +29,23 @@ fn main() {
                         .arg(Arg::new("TOKEN-B").required(true).index(2))
                     // todo: fee - defaults to 0
                 )
-            // todo: command to retrieve information about some pool
-            // todo: search command - by token (like finding all CORE pools or specific CORE-USDC)
-            /*.subcommand(
-                Command::new("deposit")
-                    .about("Add liquidity by depositing tokens to swap pool")
-            )*/
+                .subcommand(
+                    Command::new("deposit")
+                        .about("Depositing tokens to swap pool")
+                        .arg(Arg::new("SWAP-ACCOUNT").required(true).index(1))
+                        // todo: amount somehow
+                )
+                .subcommand(
+                    Command::new("withdraw")
+                        .about("Withdraw tokens from swap pool")
+                        .arg(Arg::new("SWAP-ACCOUNT").required(true).index(1))
+                        // todo: amount / slippage?
+                )
         );
     let matches = cmd.get_matches();
 
     // todo: argument to override config file path
-    // todo: try first '~/.config/stablecore/cli/config.yml'
+    // todo: try first '~/.config/hodor/cli/config.yml'
     let config_file = solana_cli_config::CONFIG_FILE.as_ref().unwrap();
     let cli_config = Config::load(config_file).unwrap();
 
