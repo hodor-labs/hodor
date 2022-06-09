@@ -2,10 +2,12 @@ use std::str::FromStr;
 use clap::ArgMatches;
 use solana_program::instruction::{AccountMeta, Instruction};
 use solana_program::pubkey::Pubkey;
+use solana_sdk::account::ReadableAccount;
 use solana_sdk::signature::{Keypair, read_keypair_file};
 use solana_sdk::signer::Signer;
 use solana_sdk::transaction::Transaction;
 use hodor_program::swap::instruction::SwapInstruction;
+use hodor_program::swap::state::SwapPool;
 use crate::{Context, Error};
 
 pub fn create_pool(context: Context, matches: &ArgMatches) -> Result<(), Error> {
@@ -74,6 +76,53 @@ pub fn create_pool(context: Context, matches: &ArgMatches) -> Result<(), Error> 
 
     let transaction_result = context.rpc_client.send_and_confirm_transaction(&transaction);
     println!("Transaction {:?}", transaction_result);
+
+    Ok(())
+}
+
+pub fn deposit(context: Context, matches: &ArgMatches) -> Result<(), Error> {
+    let pool_key = Pubkey::from_str(matches.value_of("POOL-ACCOUNT").unwrap())
+        .map_err(|_| format!("Invalid swap pool account"))?;
+
+    todo!()
+}
+
+pub fn print_info(context: Context, matches: &ArgMatches) -> Result<(), Error> {
+    let pool_key = Pubkey::from_str(matches.value_of("POOL-ACCOUNT").unwrap())
+        .map_err(|_| format!("Invalid swap pool account"))?;
+
+    let pool_account = context.rpc_client.get_account_with_commitment(
+        &pool_key,
+        context.commitment,
+    )?.value.ok_or(format!("Swap pool doesn't exist"))?;
+
+    let pool_state = SwapPool::unpack(pool_account.data())
+        .map_err(|_| format!("Provided account is not a swap pool"))?;
+
+    let token_acc_a = context.rpc_client.get_token_account_with_commitment(
+        &pool_state.token_account_a,
+        context.commitment,
+    )?.value.ok_or(format!("Unexpected, unable to resolve token account: {}", pool_state.token_account_a))?;
+
+    let token_acc_b = context.rpc_client.get_token_account_with_commitment(
+        &pool_state.token_account_b,
+        context.commitment,
+    )?.value.ok_or(format!("Unexpected, unable to resolve token account: {}", pool_state.token_account_b))?;
+
+    println!("Token A:");
+    println!("MINT: {}", token_acc_a.mint);
+    println!("Account: {}", pool_state.token_account_a);
+    println!("Balance: {}", token_acc_a.token_amount.ui_amount_string);
+    println!();
+    println!("Token B:");
+    println!("MINT: {}", token_acc_b.mint);
+    println!("Account: {}", pool_state.token_account_b);
+    println!("Balance: {}", token_acc_b.token_amount.ui_amount_string);
+    println!();
+    println!("LP MINT: {}", pool_state.lp_mint);
+    /* todo
+    println!("Fee: 0%");
+    println!("Ratio: 1/0.34 == 0.34/1");*/
 
     Ok(())
 }

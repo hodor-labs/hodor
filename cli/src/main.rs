@@ -23,7 +23,7 @@ fn main() {
             Command::new("swap")
                 .subcommand_required(true)
                 .subcommand(
-                    Command::new("create-pool") // todo: or just rename to create ?
+                    Command::new("create")
                         .about("Create new swap pool")
                         .arg(Arg::new("TOKEN-A").required(true).index(1))
                         .arg(Arg::new("TOKEN-B").required(true).index(2))
@@ -32,15 +32,21 @@ fn main() {
                 .subcommand(
                     Command::new("deposit")
                         .about("Depositing tokens to swap pool")
-                        .arg(Arg::new("SWAP-ACCOUNT").required(true).index(1))
-                        // todo: amount somehow
+                        .arg(Arg::new("POOL-ACCOUNT").required(true).index(1))
+                    // todo: amount somehow
+                )
+                .subcommand(
+                    Command::new("info")
+                        .about("Get details of swap pool")
+                        .arg(Arg::new("POOL-ACCOUNT").required(true).index(1))
                 )
                 .subcommand(
                     Command::new("withdraw")
                         .about("Withdraw tokens from swap pool")
-                        .arg(Arg::new("SWAP-ACCOUNT").required(true).index(1))
-                        // todo: amount / slippage?
+                        .arg(Arg::new("POOL-ACCOUNT").required(true).index(1))
+                    // todo: amount / slippage?
                 )
+
         );
     let matches = cmd.get_matches();
 
@@ -67,8 +73,14 @@ fn main() {
     let result = match matches.subcommand() {
         Some(("swap", matches)) => {
             match matches.subcommand() {
-                Some(("create-pool", matches)) => {
+                Some(("create", matches)) => {
                     swap::create_pool(context, matches)
+                }
+                Some(("deposit", matches)) => {
+                    swap::deposit(context, matches)
+                }
+                Some(("info", matches)) => {
+                    swap::print_info(context, matches)
                 }
                 _ => unreachable!()
             }
