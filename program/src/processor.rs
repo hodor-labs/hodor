@@ -63,3 +63,28 @@ pub(crate) fn create_spl_token_account<'a>(
 
     Ok(())
 }
+
+
+pub(crate) fn transfer_spl_token<'a>(source: &AccountInfo<'a>, destination: &AccountInfo<'a>, owner: &AccountInfo<'a>,
+                                     spl_token_program: &AccountInfo<'a>, amount: u64) -> ProgramResult {
+    let transfer_instruction = spl_token::instruction::transfer(
+        &spl_token_program.key,
+        &source.key,
+        &destination.key,
+        &owner.key,
+        &[&owner.key],
+        amount,
+    )?;
+
+    invoke(
+        &transfer_instruction,
+        &[
+            spl_token_program.clone(),
+            source.clone(),
+            destination.clone(),
+            owner.clone(),
+        ],
+    )?;
+
+    Ok(())
+}

@@ -59,7 +59,6 @@ fn main() {
     let rpc_client = RpcClient::new_with_commitment(
         &cli_config.json_rpc_url, CommitmentConfig::processed());
 
-    // todo: should be defined in program or SDK
     // todo: parametrized through arg
     let program_id = hodor_program::id();
 
