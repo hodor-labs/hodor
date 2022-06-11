@@ -7,6 +7,7 @@ use solana_program::program_pack::Pack;
 use solana_program::rent::Rent;
 use solana_program::sysvar::Sysvar;
 use spl_token::state::{Account, Mint};
+use solana_program::program_error::ProgramError::{IllegalOwner, InvalidAccountData, MissingRequiredSignature};
 use crate::swap::state::SwapPool;
 use crate::swap::instruction::SwapInstruction;
 use crate::processor::{create_spl_token_account, transfer_spl_token};
@@ -158,25 +159,25 @@ fn process_deposit(program_id: &Pubkey, accounts: &[AccountInfo], min_a: u64, ma
         return Err(MissingRequiredSignature);
     }
 
-    if swap_state_info.owner != program_id {
+    if swap_pool_state_info.owner != program_id {
         return Err(IllegalOwner);
     }
 
     let swap_pool_state = SwapPool::unpack(&swap_pool_state_info.try_borrow_data()?)?;
     if swap_pool_state.token_account_a != *destination_a_info.key
         || swap_pool_state.token_account_b != *destination_b_info.key
-        || swap_pool_state.lp_mint != &lp_mint_info.key {
+        || swap_pool_state.lp_mint != *lp_mint_info.key {
         return Err(InvalidAccountData);
     }
 
-    let lp_mint_state = Mint::unpack(&pool_lp_mint_info.try_borrow_data()?)?;
-    let destination_a_account_state = Account::unpack(&pool_token_a_account_info.try_borrow_data()?)?;
-    let destination_b_account_state = Account::unpack(&pool_token_b_account_info.try_borrow_data()?)?;
+    let lp_mint_state = Mint::unpack(&lp_mint_info.try_borrow_data()?)?;
+    let destination_a_account_state = Account::unpack(&destination_a_info.try_borrow_data()?)?;
+    let destination_b_account_state = Account::unpack(&destination_b_info.try_borrow_data()?)?;
 
     // todo: make it helper method in instruction
     let (token_a_transfer_amount, token_b_transfer_amount, lp_mint_amount) = {
         if lp_mint_state.supply == 0 {
-            (max_a , max_b, 10_000 as u64)
+            (max_a, max_b, 10_000_000_000 as u64)
         } else {
             todo!()
         }
@@ -191,7 +192,7 @@ fn process_deposit(program_id: &Pubkey, accounts: &[AccountInfo], min_a: u64, ma
         destination_a_info,
         owner_info,
         spl_token_program,
-        token_a_transfer_amount
+        token_a_transfer_amount,
     )?;
 
     transfer_spl_token(
@@ -199,11 +200,28 @@ fn process_deposit(program_id: &Pubkey, accounts: &[AccountInfo], min_a: u64, ma
         destination_b_info,
         owner_info,
         spl_token_program,
-        token_b_transfer_amount
+        token_b_transfer_amount,
     )?;
 
-    // todo: add minting LP
+    let mint_instruction = spl_token::instruction::mint_to(
+        spl_token_program.key,
+        &swap_pool_state.lp_mint,
+        destination_lp_info.key,
+        swap_pool_state_info.key,
+        &[],
+        lp_mint_amount,
+    )?;
 
+    invoke_signed(
+        &mint_instruction,
+        &[
+            spl_token_program.clone(),
+            lp_mint_info.clone(),
+            destination_lp_info.clone(),
+            swap_pool_state_info.clone(),
+        ],
+        &[&[&swap_pool_state.seed]],
+    )?;
 
     Ok(())
 }

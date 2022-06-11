@@ -6,6 +6,7 @@ use solana_sdk::account::ReadableAccount;
 use solana_sdk::signature::{Keypair, read_keypair_file};
 use solana_sdk::signer::Signer;
 use solana_sdk::transaction::Transaction;
+use spl_associated_token_account::get_associated_token_address;
 use hodor_program::swap::instruction::SwapInstruction;
 use hodor_program::swap::state::SwapPool;
 use crate::{Context, Error};
@@ -84,22 +85,91 @@ pub fn deposit(context: Context, matches: &ArgMatches) -> Result<(), Error> {
     let pool_key = Pubkey::from_str(matches.value_of("POOL-ACCOUNT").unwrap())
         .map_err(|_| format!("Invalid swap pool account"))?;
 
+    let pool_state = get_swap_pool_state(&context, &pool_key)?;
 
+    // todo: should be part of context
+    let payer_keypair = read_keypair_file(context.cli_config.keypair_path)?;
 
-    todo!()
+    let pool_account_a = context.rpc_client.get_token_account_with_commitment(
+        &pool_state.token_account_a, context.commitment)?
+        .value.ok_or(format!("Failed to resolve pool token account A: {}", pool_state.token_account_a))?;
+
+    let mint_a = Pubkey::from_str(&pool_account_a.mint)?;
+
+    let amount_a = spl_token::ui_amount_to_amount(
+        f64::from_str(matches.value_of("AMOUNT-A").unwrap())?,
+        pool_account_a.token_amount.decimals);
+
+    // todo: possibility to override through CLI param
+    let source_account_a_key = get_associated_token_address(&payer_keypair.pubkey(), &mint_a);
+
+    // todo: read account A state & check if enough balance
+
+    let pool_account_b = context.rpc_client.get_token_account_with_commitment(
+        &pool_state.token_account_b, context.commitment)?
+        .value.ok_or(format!("Failed to resolve pool token account B: {}", pool_state.token_account_b))?;
+
+    let mint_b = Pubkey::from_str(&pool_account_b.mint)?;
+
+    let amount_b = spl_token::ui_amount_to_amount(
+        f64::from_str(matches.value_of("AMOUNT-B").unwrap())?,
+        pool_account_b.token_amount.decimals);
+
+    // todo: possibility to override through CLI param
+    let source_account_b_key = get_associated_token_address(&payer_keypair.pubkey(), &mint_b);
+
+    // todo: read account B state & check if enough balance
+
+    let mut instructions = Vec::new();
+
+    // todo: configurable through param
+    let lp_destination = get_associated_token_address(&payer_keypair.pubkey(), &pool_state.lp_mint);
+    if context.rpc_client.get_token_account(&lp_destination).is_err() {
+        instructions.push(spl_associated_token_account::instruction::create_associated_token_account(
+            &payer_keypair.pubkey(),
+            &payer_keypair.pubkey(),
+            &pool_state.lp_mint,
+        ));
+    }
+
+    // todo: slippage control through CLI, for now hardcoded 1%
+    let min_a = amount_a - (amount_a / 100);
+    let min_b = amount_b - (amount_b / 100);
+
+    instructions.push(Instruction::new_with_bytes(
+        context.program_id,
+        &SwapInstruction::pack(&SwapInstruction::Deposit { min_a, max_a: amount_a, min_b, max_b: amount_b }),
+        vec![
+            AccountMeta::new(payer_keypair.pubkey(), true),
+            AccountMeta::new_readonly(pool_key, false),
+            AccountMeta::new(source_account_a_key, false),
+            AccountMeta::new(pool_state.token_account_a, false),
+            AccountMeta::new(source_account_b_key, false),
+            AccountMeta::new(pool_state.token_account_b, false),
+            AccountMeta::new(pool_state.lp_mint, false),
+            AccountMeta::new(lp_destination, false),
+            AccountMeta::new_readonly(spl_token::id(), false),
+        ],
+    ));
+
+    let transaction = Transaction::new_signed_with_payer(
+        &instructions,
+        Some(&payer_keypair.pubkey()),
+        &[&payer_keypair],
+        context.rpc_client.get_latest_blockhash()?,
+    );
+
+    let transaction_result = context.rpc_client.send_and_confirm_transaction(&transaction);
+    println!("Transaction {:?}", transaction_result);
+
+    Ok(())
 }
 
 pub fn print_info(context: Context, matches: &ArgMatches) -> Result<(), Error> {
     let pool_key = Pubkey::from_str(matches.value_of("POOL-ACCOUNT").unwrap())
         .map_err(|_| format!("Invalid swap pool account"))?;
 
-    let pool_account = context.rpc_client.get_account_with_commitment(
-        &pool_key,
-        context.commitment,
-    )?.value.ok_or(format!("Swap pool doesn't exist"))?;
-
-    let pool_state = SwapPool::unpack(pool_account.data())
-        .map_err(|_| format!("Provided account is not a swap pool"))?;
+    let pool_state = get_swap_pool_state(&context, &pool_key)?;
 
     let token_acc_a = context.rpc_client.get_token_account_with_commitment(
         &pool_state.token_account_a,
@@ -127,4 +197,15 @@ pub fn print_info(context: Context, matches: &ArgMatches) -> Result<(), Error> {
     println!("Ratio: 1/0.34 == 0.34/1");*/
 
     Ok(())
+}
+
+
+fn get_swap_pool_state(context: &Context, pool_state_account: &Pubkey) -> Result<SwapPool, Error> {
+    let account = context.rpc_client.get_account_with_commitment(
+        pool_state_account,
+        context.commitment,
+    )?.value.ok_or(format!("Swap pool doesn't exist"))?;
+
+    Ok(SwapPool::unpack(account.data())
+        .map_err(|_| format!("Provided account is not a swap pool"))?)
 }

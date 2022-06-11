@@ -33,7 +33,8 @@ fn main() {
                     Command::new("deposit")
                         .about("Depositing tokens to swap pool")
                         .arg(Arg::new("POOL-ACCOUNT").required(true).index(1))
-                    // todo: amount somehow
+                        .arg(Arg::new("AMOUNT-A").required(true).index(2))
+                        .arg(Arg::new("AMOUNT-B").required(true).index(3))
                 )
                 .subcommand(
                     Command::new("info")
