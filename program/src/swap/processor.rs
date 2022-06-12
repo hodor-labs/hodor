@@ -181,7 +181,10 @@ fn process_deposit(program_id: &Pubkey, accounts: &[AccountInfo], min_a: u64, ma
         max_a,
         max_b).ok_or(InvalidInstructionData)?;
 
-    // todo: slippage check - fail if over it
+    if token_a_transfer_amount < min_a || token_b_transfer_amount < min_b {
+        // todo: add custom error message
+        return Err(InvalidInstructionData);
+    }
 
     transfer_spl_token(
         source_a_info,
