@@ -26,9 +26,9 @@ pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], instruction_data: 
             msg!("Swap:Deposit");
             process_deposit(program_id, accounts, min_a, max_a, min_b, max_b)
         }
-        SwapInstruction::Withdraw {} => {
+        SwapInstruction::Withdraw { lp_amount, min_a, min_b } => {
             msg!("Swap:Withdraw");
-            todo!()
+            process_wthdraw(program_id, accounts, lp_amount, min_a, min_b)
         }
     }
 }
@@ -223,4 +223,8 @@ fn process_deposit(program_id: &Pubkey, accounts: &[AccountInfo], min_a: u64, ma
     )?;
 
     Ok(())
+}
+
+fn process_wthdraw(program_id: &Pubkey, accounts: &[AccountInfo], lp_amount: u64, min_a: u64, min_b: u64) -> ProgramResult {
+    todo!()
 }

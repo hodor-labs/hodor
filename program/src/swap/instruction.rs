@@ -45,9 +45,20 @@ pub enum SwapInstruction {
     },
 
     // 13
-    // Withdraw
+    // Withdraw tokens from pool
+    // 0. [signer] Fee payer, token accounts owner
+    // 1. [] Swap pool state account - PDA
+    // 2. [writeable] Source token A account
+    // 3. [writeable] Destination token A account
+    // 4. [writeable] Source token B account
+    // 5. [writeable] Destination token B account
+    // 6. [writeable] LP mint
+    // 7. [writeable] Source LP token account
+    // 8. [] SPL token program
     Withdraw {
-        // todo: slippage control ?
+        lp_amount: u64,
+        min_a: u64,
+        min_b: u64,
     },
 }
 
@@ -74,8 +85,11 @@ impl SwapInstruction {
                 buffer.extend_from_slice(&min_b.to_le_bytes());
                 buffer.extend_from_slice(&max_b.to_le_bytes());
             }
-            SwapInstruction::Withdraw {} => {
-                todo!()
+            SwapInstruction::Withdraw { lp_amount, min_a, min_b } => {
+                buffer.push(3);
+                buffer.extend_from_slice(&lp_amount.to_le_bytes());
+                buffer.extend_from_slice(&min_a.to_le_bytes());
+                buffer.extend_from_slice(&min_b.to_le_bytes())
             }
         };
 
@@ -126,6 +140,24 @@ impl SwapInstruction {
 
                 Ok(SwapInstruction::Deposit { min_a, max_a, min_b, max_b })
             }
+            3 => {
+                let lp_amount = rest.get(..8)
+                    .and_then(|slice| slice.try_into().ok())
+                    .map(u64::from_le_bytes)
+                    .ok_or(InvalidInstructionData)?;
+
+                let min_a = rest.get(8..16)
+                    .and_then(|slice| slice.try_into().ok())
+                    .map(u64::from_le_bytes)
+                    .ok_or(InvalidInstructionData)?;
+
+                let min_b = rest.get(16..24)
+                    .and_then(|slice| slice.try_into().ok())
+                    .map(u64::from_le_bytes)
+                    .ok_or(InvalidInstructionData)?;
+
+                Ok(SwapInstruction::Withdraw { lp_amount, min_a, min_b })
+            }
             _ => Err(InvalidInstructionData)
         }
     }
@@ -155,7 +187,7 @@ pub fn calculate_deposit_amounts(pool_a_amount: u64, pool_b_amount: u64, pool_lp
 
         (deposit_a, deposit_max_b)
     } else {
-        let deposit_b : u64 = (deposit_max_a as u128)
+        let deposit_b: u64 = (deposit_max_a as u128)
             .checked_mul(u64::MAX as u128)?
             .checked_div(pool_ratio)?
             .try_into().ok()?;
@@ -176,23 +208,43 @@ pub fn calculate_deposit_amounts(pool_a_amount: u64, pool_b_amount: u64, pool_lp
 
 #[cfg(test)]
 mod tests {
+    use solana_program::pubkey::Pubkey;
     use super::*;
 
     #[test]
     fn test_pack_unpack_swap_instruction() {
-        let instruction = SwapInstruction::Deposit {
+        let create_instruction = SwapInstruction::CreatePool { seed: Pubkey::new_unique().to_bytes() };
+        assert_eq!(create_instruction, SwapInstruction::unpack(&create_instruction.pack()).unwrap());
+        assert_ne!(create_instruction, SwapInstruction::unpack(&SwapInstruction::CreatePool {
+            seed: Default::default()
+        }.pack()).unwrap());
+
+        let deposit_instruction = SwapInstruction::Deposit {
             min_a: 1,
             max_a: 2,
             min_b: 3,
             max_b: 4,
         };
 
-        assert_eq!(instruction, SwapInstruction::unpack(&instruction.pack()).unwrap());
-        assert_ne!(instruction, SwapInstruction::unpack(&SwapInstruction::Deposit {
+        assert_eq!(deposit_instruction, SwapInstruction::unpack(&deposit_instruction.pack()).unwrap());
+        assert_ne!(deposit_instruction, SwapInstruction::unpack(&SwapInstruction::Deposit {
             min_a: 1,
             max_a: 1,
             min_b: 1,
             max_b: 1,
+        }.pack()).unwrap());
+
+
+        let withdraw_instruction = SwapInstruction::Withdraw {
+            lp_amount: 1,
+            min_a: 2,
+            min_b: 3,
+        };
+        assert_eq!(withdraw_instruction, SwapInstruction::unpack(&withdraw_instruction.pack()).unwrap());
+        assert_ne!(withdraw_instruction, SwapInstruction::unpack(&SwapInstruction::Withdraw {
+            lp_amount: 1,
+            min_a: 1,
+            min_b: 1,
         }.pack()).unwrap());
     }
 
