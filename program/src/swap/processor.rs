@@ -7,9 +7,9 @@ use solana_program::program_pack::Pack;
 use solana_program::rent::Rent;
 use solana_program::sysvar::Sysvar;
 use spl_token::state::{Account, Mint};
-use solana_program::program_error::ProgramError::{IllegalOwner, InvalidAccountData, MissingRequiredSignature};
+use solana_program::program_error::ProgramError::{IllegalOwner, InvalidAccountData, InvalidInstructionData, MissingRequiredSignature};
 use crate::swap::state::SwapPool;
-use crate::swap::instruction::SwapInstruction;
+use crate::swap::instruction::{calculate_deposit_amounts, SwapInstruction};
 use crate::processor::{create_spl_token_account, transfer_spl_token};
 
 pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], instruction_data: &[u8]) -> ProgramResult {
@@ -174,18 +174,14 @@ fn process_deposit(program_id: &Pubkey, accounts: &[AccountInfo], min_a: u64, ma
     let destination_a_account_state = Account::unpack(&destination_a_info.try_borrow_data()?)?;
     let destination_b_account_state = Account::unpack(&destination_b_info.try_borrow_data()?)?;
 
-    // todo: make it helper method in instruction
-    let (token_a_transfer_amount, token_b_transfer_amount, lp_mint_amount) = {
-        if lp_mint_state.supply == 0 {
-            (max_a, max_b, 10_000_000_000 as u64)
-        } else {
-            todo!()
-        }
-    };
+    let (token_a_transfer_amount, token_b_transfer_amount, lp_mint_amount) = calculate_deposit_amounts(
+        destination_a_account_state.amount,
+        destination_b_account_state.amount,
+        lp_mint_state.supply,
+        max_a,
+        max_b).ok_or(InvalidInstructionData)?;
 
-    msg!("D A in: {}", token_a_transfer_amount);
-    msg!("D B in: {}", token_b_transfer_amount);
-    msg!("D LP mint: {}", lp_mint_amount);
+    // todo: slippage check - fail if over it
 
     transfer_spl_token(
         source_a_info,

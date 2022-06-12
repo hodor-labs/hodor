@@ -132,6 +132,48 @@ impl SwapInstruction {
 }
 
 
+pub fn calculate_deposit_amounts(pool_a_amount: u64, pool_b_amount: u64, pool_lp_amount: u64,
+                                 deposit_max_a: u64, deposit_max_b: u64) -> Option<(u64, u64, u64)> {
+    if pool_lp_amount == 0 {
+        // Deposit to empty pool
+        return Some((deposit_max_a, deposit_max_b, 10_000_000_000 as u64));
+    }
+
+    let pool_ratio = (pool_a_amount as u128)
+        .checked_mul(u64::MAX as u128)?
+        .checked_div(pool_b_amount as u128)?;
+
+    let deposit_ratio = (deposit_max_a as u128)
+        .checked_mul(u64::MAX as u128)?
+        .checked_div(deposit_max_b as u128)?;
+
+    let (deposit_a, deposit_b) = if deposit_ratio >= pool_ratio {
+        let deposit_a: u64 = (deposit_max_b as u128)
+            .checked_mul(pool_ratio)?
+            .checked_div(u64::MAX as u128)?
+            .try_into().ok()?;
+
+        (deposit_a, deposit_max_b)
+    } else {
+        let deposit_b : u64 = (deposit_max_a as u128)
+            .checked_mul(u64::MAX as u128)?
+            .checked_div(pool_ratio)?
+            .try_into().ok()?;
+
+        (deposit_max_a, deposit_b)
+    };
+
+    let lp_mint_amount = (deposit_a as u128)
+        .checked_mul(u64::MAX as u128)?
+        .checked_div(pool_a_amount as u128)?
+        .checked_mul(pool_lp_amount as u128)?
+        .checked_div(u64::MAX as u128)?
+        .try_into().ok()?;
+
+    Some((deposit_a, deposit_b, lp_mint_amount))
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -152,5 +194,34 @@ mod tests {
             min_b: 1,
             max_b: 1,
         }.pack()).unwrap());
+    }
+
+
+    #[test]
+    fn test_calculate_deposit_amounts() {
+        assert_eq!(
+            Some((69, 420, 10_000_000_000)),
+            calculate_deposit_amounts(0, 0, 0, 69, 420)
+        );
+
+        assert_eq!(
+            Some((100, 100, 10_000)),
+            calculate_deposit_amounts(100, 100, 10_000, 100, 100)
+        );
+        assert_eq!(
+            Some((100, 100, 10_000)),
+            calculate_deposit_amounts(100, 100, 10_000, 110, 100)
+        );
+        assert_eq!(
+            Some((100, 100, 10_000)),
+            calculate_deposit_amounts(100, 100, 10_000, 100, 110)
+        );
+
+
+        // todo: add more unit tests
+
+        // todo: test input u64::MAX
+
+        // todo: test for rounding error- printing money
     }
 }
