@@ -45,9 +45,8 @@ fn main() {
                     Command::new("withdraw")
                         .about("Withdraw tokens from swap pool")
                         .arg(Arg::new("POOL-ACCOUNT").required(true).index(1))
-                    // todo: amount / slippage?
+                        .arg(Arg::new("LP-AMOUNT").required(false).index(2))
                 )
-
         );
     let matches = cmd.get_matches();
 
@@ -81,6 +80,9 @@ fn main() {
                 }
                 Some(("info", matches)) => {
                     swap::print_info(context, matches)
+                }
+                Some(("withdraw", matches)) => {
+                    swap::withdraw(context, matches)
                 }
                 _ => unreachable!()
             }

@@ -9,7 +9,7 @@ use solana_program::sysvar::Sysvar;
 use spl_token::state::{Account, Mint};
 use solana_program::program_error::ProgramError::{IllegalOwner, InvalidAccountData, InvalidInstructionData, MissingRequiredSignature};
 use crate::swap::state::SwapPool;
-use crate::swap::instruction::{calculate_deposit_amounts, SwapInstruction};
+use crate::swap::instruction::{calculate_deposit_amounts, calculate_withdraw_amounts, SwapInstruction};
 use crate::processor::{create_spl_token_account, transfer_spl_token};
 
 pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], instruction_data: &[u8]) -> ProgramResult {
@@ -226,5 +226,107 @@ fn process_deposit(program_id: &Pubkey, accounts: &[AccountInfo], min_a: u64, ma
 }
 
 fn process_wthdraw(program_id: &Pubkey, accounts: &[AccountInfo], lp_amount: u64, min_a: u64, min_b: u64) -> ProgramResult {
-    todo!()
+    let accounts_iter = &mut accounts.iter();
+    let owner_info = next_account_info(accounts_iter)?;
+    let swap_pool_state_info = next_account_info(accounts_iter)?;
+    let source_a_info = next_account_info(accounts_iter)?;
+    let destination_a_info = next_account_info(accounts_iter)?;
+    let source_b_info = next_account_info(accounts_iter)?;
+    let destination_b_info = next_account_info(accounts_iter)?;
+    let lp_mint_info = next_account_info(accounts_iter)?;
+    let source_lp_info = next_account_info(accounts_iter)?;
+
+    let spl_token_program = next_account_info(accounts_iter)?;
+
+    if !owner_info.is_signer {
+        return Err(MissingRequiredSignature);
+    }
+
+    if swap_pool_state_info.owner != program_id {
+        return Err(IllegalOwner);
+    }
+
+    let swap_pool_state = SwapPool::unpack(&swap_pool_state_info.try_borrow_data()?)?;
+    if swap_pool_state.token_account_a != *source_a_info.key
+        || swap_pool_state.token_account_b != *source_b_info.key
+        || swap_pool_state.lp_mint != *lp_mint_info.key {
+        return Err(InvalidAccountData);
+    }
+
+    let lp_mint_state = Mint::unpack(&lp_mint_info.try_borrow_data()?)?;
+    let source_a_account_state = Account::unpack(&source_a_info.try_borrow_data()?)?;
+    let source_b_account_state = Account::unpack(&source_b_info.try_borrow_data()?)?;
+
+    let (withdraw_a_amount, withdraw_b_amount) = calculate_withdraw_amounts(
+        source_a_account_state.amount,
+        source_b_account_state.amount,
+        lp_mint_state.supply,
+        lp_amount,
+    ).ok_or(InvalidInstructionData)?;
+
+    if withdraw_a_amount < min_a || withdraw_b_amount < min_b {
+        // todo: add custom error message
+        return Err(InvalidInstructionData);
+    }
+
+
+    // todo: test burning of more than provided account have
+    let burn_instruction = spl_token::instruction::burn(
+        spl_token_program.key,
+        source_lp_info.key,
+        &swap_pool_state.lp_mint,
+        owner_info.key,
+        &[owner_info.key],
+        lp_amount,
+    )?;
+
+    invoke(
+        &burn_instruction,
+        &[
+            spl_token_program.clone(),
+            source_lp_info.clone(),
+            lp_mint_info.clone(),
+            owner_info.clone(),
+        ],
+    )?;
+
+    let transfer_a_instruction = spl_token::instruction::transfer(
+        spl_token_program.key,
+        &swap_pool_state.token_account_a,
+        destination_a_info.key,
+        swap_pool_state_info.key,
+        &[],
+        withdraw_a_amount,
+    )?;
+    invoke_signed(
+        &transfer_a_instruction,
+        &[
+            spl_token_program.clone(),
+            source_a_info.clone(),
+            destination_a_info.clone(),
+            swap_pool_state_info.clone(),
+        ],
+        &[&[&swap_pool_state.seed]],
+    )?;
+
+    let transfer_b_instruction = spl_token::instruction::transfer(
+        spl_token_program.key,
+        &swap_pool_state.token_account_b,
+        destination_b_info.key,
+        swap_pool_state_info.key,
+        &[],
+        withdraw_b_amount,
+    )?;
+    invoke_signed(
+        &transfer_b_instruction,
+        &[
+            spl_token_program.clone(),
+            source_b_info.clone(),
+            destination_b_info.clone(),
+            swap_pool_state_info.clone(),
+        ],
+        &[&[&swap_pool_state.seed]],
+    )?;
+
+    Ok(())
 }

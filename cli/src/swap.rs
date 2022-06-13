@@ -7,6 +7,7 @@ use solana_sdk::signature::{Keypair, read_keypair_file};
 use solana_sdk::signer::Signer;
 use solana_sdk::transaction::Transaction;
 use spl_associated_token_account::get_associated_token_address;
+use spl_token::ui_amount_to_amount;
 use hodor_program::swap::instruction::SwapInstruction;
 use hodor_program::swap::state::SwapPool;
 use crate::{Context, Error};
@@ -199,6 +200,56 @@ pub fn print_info(context: Context, matches: &ArgMatches) -> Result<(), Error> {
     Ok(())
 }
 
+pub fn withdraw(context: Context, matches: &ArgMatches) -> Result<(), Error> {
+    let pool_key = Pubkey::from_str(matches.value_of("POOL-ACCOUNT").unwrap())
+        .map_err(|_| format!("Invalid swap pool account"))?;
+
+    let pool_state = get_swap_pool_state(&context, &pool_key)?;
+
+    // todo: should be part of context
+    let payer_keypair = read_keypair_file(context.cli_config.keypair_path)?;
+
+    let lp_account_key = get_associated_token_address(
+        &payer_keypair.pubkey(),
+        &pool_state.lp_mint);
+
+    let lp_account = context.rpc_client.get_token_account_with_commitment(
+        &lp_account_key, context.commitment)?
+        .value.ok_or(format!("Unable to resolve source LP account: {}, mint: {}", lp_account_key, pool_state.lp_mint))?;
+
+    let provided_amount = matches.value_of("LP-AMOUNT")
+        .map(|v| f64::from_str(v).map_err(|_| format!("Provided LP amount is incorrect")));
+
+    let lp_amount = matches.value_of("LP-AMOUNT")
+        .map_or_else(
+            || u64::from_str(lp_account.token_amount.amount.as_str())
+                .map_err(|_| format!("Unable to read available LP token amount")),
+            |v| f64::from_str(v).map_err(|_| format!("Provided LP amount is incorrect"))
+                .map(|v| ui_amount_to_amount(v, lp_account.token_amount.decimals)),
+        )?;
+
+    // todo: slippage
+
+    // todo: possibility to override through CLI param
+    let source_account_a_key = get_associated_token_address(&payer_keypair.pubkey(), &mint_a);
+    // todo: read destination token accounts, create them if missing
+
+    let instruction = Instruction::new_with_bytes(
+        context.program_id,
+        &SwapInstruction::pack(&SwapInstruction::Withdraw {
+            lp_amount,
+            min_a: 0,
+            min_b: 0
+        }),
+        vec![
+            AccountMeta::new(payer_keypair.pubkey(), true),
+            AccountMeta::new_readonly(pool_key, false),
+            // todo
+        ],
+    );
+
+    Ok(())
+}
 
 fn get_swap_pool_state(context: &Context, pool_state_account: &Pubkey) -> Result<SwapPool, Error> {
     let account = context.rpc_client.get_account_with_commitment(
