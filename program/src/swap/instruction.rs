@@ -164,9 +164,9 @@ impl SwapInstruction {
 }
 
 
-pub fn calculate_deposit_amounts(pool_a_amount: u64, pool_b_amount: u64, pool_lp_amount: u64,
+pub fn calculate_deposit_amounts(pool_a_amount: u64, pool_b_amount: u64, lp_supply: u64,
                                  deposit_max_a: u64, deposit_max_b: u64) -> Option<(u64, u64, u64)> {
-    if pool_lp_amount == 0 {
+    if lp_supply == 0 {
         // Deposit to empty pool
         return Some((deposit_max_a, deposit_max_b, 10_000_000_000 as u64));
     }
@@ -198,11 +198,34 @@ pub fn calculate_deposit_amounts(pool_a_amount: u64, pool_b_amount: u64, pool_lp
     let lp_mint_amount = (deposit_a as u128)
         .checked_mul(u64::MAX as u128)?
         .checked_div(pool_a_amount as u128)?
-        .checked_mul(pool_lp_amount as u128)?
+        .checked_mul(lp_supply as u128)?
         .checked_div(u64::MAX as u128)?
         .try_into().ok()?;
 
     Some((deposit_a, deposit_b, lp_mint_amount))
+}
+
+pub fn calculate_withdraw_amounts(pool_a_amount: u64, pool_b_amount: u64, lp_supply: u64,
+                                  withdraw_lp_amount: u64) -> Option<(u64, u64)> {
+    if withdraw_lp_amount == lp_supply {
+        return Some((pool_a_amount, pool_b_amount));
+    }
+
+    let withdraw_ratio = (withdraw_lp_amount as u128)
+        .checked_mul(u64::MAX as u128)?
+        .checked_div(lp_supply as u128)?;
+
+    let withdraw_a_amount = (pool_a_amount as u128)
+        .checked_mul(withdraw_ratio)?
+        .checked_div(u64::MAX as u128)?
+        .try_into().ok()?;
+
+    let withdraw_b_amount = (pool_b_amount as u128)
+        .checked_mul(withdraw_ratio)?
+        .checked_div(u64::MAX as u128)?
+        .try_into().ok()?;
+
+    Some((withdraw_a_amount, withdraw_b_amount))
 }
 
 
@@ -275,5 +298,56 @@ mod tests {
         // todo: test input u64::MAX
 
         // todo: test for rounding error- printing money
+    }
+
+    #[test]
+    fn test_calculate_withdraw_amounts() {
+        assert_eq!(
+            Some((10, 10)),
+            calculate_withdraw_amounts(10, 10, 100, 100)
+        );
+
+        assert_eq!(
+            Some((4_999, 4_999)),
+            calculate_withdraw_amounts(10_000, 10_000, 100_000, 50_000)
+        );
+
+        assert_eq!(
+            Some((4_999_999_999, 4_999_999_999)),
+            calculate_withdraw_amounts(10_000_000_000, 10_000_000_000, 100_000_000_000, 50_000_000_000)
+        );
+
+        assert_eq!(
+            Some((5_000, 5_000)),
+            calculate_withdraw_amounts(10_000, 10_000, 100_000, 50_001)
+        );
+
+        assert_eq!(
+            Some((5_000, 2_500)),
+            calculate_withdraw_amounts(10_000, 5_000, 100_000, 50_001)
+        );
+
+        assert_eq!(
+            Some((2_500, 5_000)),
+            calculate_withdraw_amounts(5_000, 10_000, 100_000, 50_001)
+        );
+
+        assert_eq!(
+            Some((0, 0)),
+            calculate_withdraw_amounts(5_000, 10_000, 100_000, 1)
+        );
+
+        assert_eq!(
+            Some((49, 29)),
+            calculate_withdraw_amounts(5_000_000, 3_000_000, 100_000, 1)
+        );
+
+        assert_eq!(
+            Some((0, 0)),
+            calculate_withdraw_amounts(10, 10, 100, 9)
+        );
+
+        // todo: tests with rounding errors
+        // todo: tests with overflow
     }
 }
