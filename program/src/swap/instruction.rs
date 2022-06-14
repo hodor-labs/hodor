@@ -21,8 +21,18 @@ pub enum SwapInstruction {
     },
 
     // 11
+    // Swap tokens
+    // 0. [signer] Fee payer, token accounts owner
+    // 1. [] Swap pool state account - PDA
+    // 2. [writeable] Source input token account
+    // 3. [writeable] Destination input token account
+    // 4. [writeable] Source output token account
+    // 5. [writeable] Destination output token account
+    // todo: fee accounts
+    // 6. [] SPL token program
     Swap {
-        // todo: slippage
+        amount_in: u64,
+        min_amount_out: u64,
     },
 
     // 12
@@ -75,8 +85,10 @@ impl SwapInstruction {
                 buffer.push(0);
                 buffer.extend_from_slice(seed);
             }
-            SwapInstruction::Swap {} => {
-                todo!()
+            SwapInstruction::Swap { amount_in, min_amount_out } => {
+                buffer.push(1);
+                buffer.extend_from_slice(&amount_in.to_le_bytes());
+                buffer.extend_from_slice(&min_amount_out.to_le_bytes());
             }
             SwapInstruction::Deposit { min_a, max_a, min_b, max_b } => {
                 buffer.push(2);
@@ -114,8 +126,17 @@ impl SwapInstruction {
                 Ok(SwapInstruction::CreatePool { seed })
             }
             1 => {
-                // swap
-                todo!()
+                let amount_in = rest.get(..8)
+                    .and_then(|slice| slice.try_into().ok())
+                    .map(u64::from_le_bytes)
+                    .ok_or(InvalidInstructionData)?;
+
+                let min_amount_out = rest.get(8..16)
+                    .and_then(|slice| slice.try_into().ok())
+                    .map(u64::from_le_bytes)
+                    .ok_or(InvalidInstructionData)?;
+
+                Ok(SwapInstruction::Swap { amount_in, min_amount_out })
             }
             2 => {
                 let min_a = rest.get(..8)
@@ -240,6 +261,14 @@ mod tests {
         assert_eq!(create_instruction, SwapInstruction::unpack(&create_instruction.pack()).unwrap());
         assert_ne!(create_instruction, SwapInstruction::unpack(&SwapInstruction::CreatePool {
             seed: Default::default()
+        }.pack()).unwrap());
+
+
+        let swap_instruction = SwapInstruction::Swap { amount_in: 1, min_amount_out: 2 };
+        assert_eq!(swap_instruction, SwapInstruction::unpack(&swap_instruction.pack()).unwrap());
+        assert_ne!(swap_instruction, SwapInstruction::unpack(&SwapInstruction::Swap {
+            amount_in: 0,
+            min_amount_out: 0,
         }.pack()).unwrap());
 
         let deposit_instruction = SwapInstruction::Deposit {

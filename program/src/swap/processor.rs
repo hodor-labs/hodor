@@ -18,7 +18,7 @@ pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], instruction_data: 
             msg!("Swap:CreatePool");
             process_create_pool(program_id, accounts, seed)
         }
-        SwapInstruction::Swap {} => {
+        SwapInstruction::Swap { amount_in, min_amount_out } => {
             msg!("Swap:Swap");
             todo!()
         }
