@@ -217,9 +217,6 @@ pub fn withdraw(context: Context, matches: &ArgMatches) -> Result<(), Error> {
         &lp_account_key, context.commitment)?
         .value.ok_or(format!("Unable to resolve source LP account: {}, mint: {}", lp_account_key, pool_state.lp_mint))?;
 
-    let provided_amount = matches.value_of("LP-AMOUNT")
-        .map(|v| f64::from_str(v).map_err(|_| format!("Provided LP amount is incorrect")));
-
     let lp_amount = matches.value_of("LP-AMOUNT")
         .map_or_else(
             || u64::from_str(lp_account.token_amount.amount.as_str())
@@ -230,9 +227,25 @@ pub fn withdraw(context: Context, matches: &ArgMatches) -> Result<(), Error> {
 
     // todo: slippage
 
+    let pool_account_a = context.rpc_client.get_token_account_with_commitment(
+        &pool_state.token_account_a, context.commitment)?
+        .value.ok_or(format!("Failed to resolve pool token account A: {}", pool_state.token_account_a))?;
+
+    let mint_a = Pubkey::from_str(&pool_account_a.mint)?;
+
     // todo: possibility to override through CLI param
-    let source_account_a_key = get_associated_token_address(&payer_keypair.pubkey(), &mint_a);
-    // todo: read destination token accounts, create them if missing
+    let destination_account_a_key = get_associated_token_address(&payer_keypair.pubkey(), &mint_a);
+
+    let pool_account_b = context.rpc_client.get_token_account_with_commitment(
+        &pool_state.token_account_b, context.commitment)?
+        .value.ok_or(format!("Failed to resolve pool token account B: {}", pool_state.token_account_b))?;
+
+    let mint_b = Pubkey::from_str(&pool_account_b.mint)?;
+
+    // todo: possibility to override through CLI param
+    let destination_account_b_key = get_associated_token_address(&payer_keypair.pubkey(), &mint_b);
+
+    // todo: option to create destination token accounts
 
     let instruction = Instruction::new_with_bytes(
         context.program_id,
@@ -244,9 +257,25 @@ pub fn withdraw(context: Context, matches: &ArgMatches) -> Result<(), Error> {
         vec![
             AccountMeta::new(payer_keypair.pubkey(), true),
             AccountMeta::new_readonly(pool_key, false),
-            // todo
+            AccountMeta::new(pool_state.token_account_a, false),
+            AccountMeta::new(destination_account_a_key, false),
+            AccountMeta::new(pool_state.token_account_b, false),
+            AccountMeta::new(destination_account_b_key, false),
+            AccountMeta::new(pool_state.lp_mint, false),
+            AccountMeta::new(lp_account_key, false),
+            AccountMeta::new_readonly(spl_token::id(), false),
         ],
     );
+
+    let transaction = Transaction::new_signed_with_payer(
+        &[instruction],
+        Some(&payer_keypair.pubkey()),
+        &[&payer_keypair],
+        context.rpc_client.get_latest_blockhash()?,
+    );
+
+    let transaction_result = context.rpc_client.send_and_confirm_transaction(&transaction);
+    println!("Transaction {:?}", transaction_result);
 
     Ok(())
 }
