@@ -31,8 +31,8 @@ pub enum SwapInstruction {
     // todo: fee accounts
     // 6. [] SPL token program
     Swap {
-        amount_in: u64,
-        min_amount_out: u64,
+        in_amount: u64,
+        min_out_amount: u64,
     },
 
     // 12
@@ -85,10 +85,10 @@ impl SwapInstruction {
                 buffer.push(0);
                 buffer.extend_from_slice(seed);
             }
-            SwapInstruction::Swap { amount_in, min_amount_out } => {
+            SwapInstruction::Swap { in_amount, min_out_amount } => {
                 buffer.push(1);
-                buffer.extend_from_slice(&amount_in.to_le_bytes());
-                buffer.extend_from_slice(&min_amount_out.to_le_bytes());
+                buffer.extend_from_slice(&in_amount.to_le_bytes());
+                buffer.extend_from_slice(&min_out_amount.to_le_bytes());
             }
             SwapInstruction::Deposit { min_a, max_a, min_b, max_b } => {
                 buffer.push(2);
@@ -126,17 +126,17 @@ impl SwapInstruction {
                 Ok(SwapInstruction::CreatePool { seed })
             }
             1 => {
-                let amount_in = rest.get(..8)
+                let in_amount = rest.get(..8)
                     .and_then(|slice| slice.try_into().ok())
                     .map(u64::from_le_bytes)
                     .ok_or(InvalidInstructionData)?;
 
-                let min_amount_out = rest.get(8..16)
+                let min_out_amount = rest.get(8..16)
                     .and_then(|slice| slice.try_into().ok())
                     .map(u64::from_le_bytes)
                     .ok_or(InvalidInstructionData)?;
 
-                Ok(SwapInstruction::Swap { amount_in, min_amount_out })
+                Ok(SwapInstruction::Swap { in_amount, min_out_amount })
             }
             2 => {
                 let min_a = rest.get(..8)
@@ -226,6 +226,10 @@ pub fn calculate_deposit_amounts(pool_a_amount: u64, pool_b_amount: u64, lp_supp
     Some((deposit_a, deposit_b, lp_mint_amount))
 }
 
+pub fn calculate_swap_amounts(pool_in_amount: u64, pool_out_amount: u64, swap_in_amount: u64) -> Option<(u64)> {
+    todo!()
+}
+
 pub fn calculate_withdraw_amounts(pool_a_amount: u64, pool_b_amount: u64, lp_supply: u64,
                                   withdraw_lp_amount: u64) -> Option<(u64, u64)> {
     if withdraw_lp_amount == lp_supply {
@@ -264,11 +268,11 @@ mod tests {
         }.pack()).unwrap());
 
 
-        let swap_instruction = SwapInstruction::Swap { amount_in: 1, min_amount_out: 2 };
+        let swap_instruction = SwapInstruction::Swap { in_amount: 1, min_out_amount: 2 };
         assert_eq!(swap_instruction, SwapInstruction::unpack(&swap_instruction.pack()).unwrap());
         assert_ne!(swap_instruction, SwapInstruction::unpack(&SwapInstruction::Swap {
-            amount_in: 0,
-            min_amount_out: 0,
+            in_amount: 0,
+            min_out_amount: 0,
         }.pack()).unwrap());
 
         let deposit_instruction = SwapInstruction::Deposit {

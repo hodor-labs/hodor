@@ -42,6 +42,11 @@ fn main() {
                         .arg(Arg::new("POOL-ACCOUNT").required(true).index(1))
                 )
                 .subcommand(
+                    Command::new("swap")
+                        .about("Swap tokens")
+                    // todo: args
+                )
+                .subcommand(
                     Command::new("withdraw")
                         .about("Withdraw tokens from swap pool")
                         .arg(Arg::new("POOL-ACCOUNT").required(true).index(1))

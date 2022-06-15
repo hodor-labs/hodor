@@ -9,7 +9,7 @@ use solana_program::sysvar::Sysvar;
 use spl_token::state::{Account, Mint};
 use solana_program::program_error::ProgramError::{IllegalOwner, InvalidAccountData, InvalidInstructionData, MissingRequiredSignature};
 use crate::swap::state::SwapPool;
-use crate::swap::instruction::{calculate_deposit_amounts, calculate_withdraw_amounts, SwapInstruction};
+use crate::swap::instruction::{calculate_deposit_amounts, calculate_swap_amounts, calculate_withdraw_amounts, SwapInstruction};
 use crate::processor::{create_spl_token_account, transfer_spl_token};
 
 pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], instruction_data: &[u8]) -> ProgramResult {
@@ -18,9 +18,9 @@ pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], instruction_data: 
             msg!("Swap:CreatePool");
             process_create_pool(program_id, accounts, seed)
         }
-        SwapInstruction::Swap { amount_in, min_amount_out } => {
+        SwapInstruction::Swap { in_amount, min_out_amount } => {
             msg!("Swap:Swap");
-            todo!()
+            process_swap(program_id, accounts, in_amount, min_out_amount)
         }
         SwapInstruction::Deposit { min_a, max_a, min_b, max_b } => {
             msg!("Swap:Deposit");
@@ -48,6 +48,10 @@ fn process_create_pool(program_id: &Pubkey, accounts: &[AccountInfo], seed: [u8;
     let system_program = next_account_info(accounts_iter)?;
 
     let rent = Rent::get()?;
+
+    if token_a_mint_info.key == token_b_mint_info.key {
+        return Err(InvalidAccountData);
+    }
 
     let seeds_a = [swap_state_info.key.as_ref(), b"A"];
     create_spl_token_account(
@@ -222,6 +226,52 @@ fn process_deposit(program_id: &Pubkey, accounts: &[AccountInfo], min_a: u64, ma
         &[&[&swap_pool_state.seed]],
     )?;
 
+    Ok(())
+}
+
+fn process_swap(program_id: &Pubkey, accounts: &[AccountInfo], in_amount: u64, min_out_amount: u64) -> ProgramResult {
+    let accounts_iter = &mut accounts.iter();
+    let owner_info = next_account_info(accounts_iter)?;
+    let swap_pool_state_info = next_account_info(accounts_iter)?;
+    let input_source_info = next_account_info(accounts_iter)?;
+    let input_destination_info = next_account_info(accounts_iter)?;
+    let output_source_info = next_account_info(accounts_iter)?;
+    let output_destination_info = next_account_info(accounts_iter)?;
+
+    let spl_token_program = next_account_info(accounts_iter)?;
+
+    if !owner_info.is_signer {
+        return Err(MissingRequiredSignature);
+    }
+
+    if swap_pool_state_info.owner != program_id {
+        return Err(IllegalOwner);
+    }
+
+    let swap_pool_state = SwapPool::unpack(&swap_pool_state_info.try_borrow_data()?)?;
+
+    // todo: this conditions need to be unit tested
+    if !(
+        (*input_destination_info.key == swap_pool_state.token_account_a && *output_source_info.key == swap_pool_state.token_account_b)
+            || (*input_destination_info.key == swap_pool_state.token_account_b && *output_source_info.key == swap_pool_state.token_account_a)) {
+        return Err(InvalidAccountData);
+    }
+
+    let input_destination_state = Account::unpack(&input_destination_info.try_borrow_data()?)?;
+    let output_source_state = Account::unpack(&output_source_info.try_borrow_data()?)?;
+
+
+    let (out_amount) = calculate_swap_amounts(
+        input_destination_state.amount,
+        output_source_state.amount,
+        in_amount).ok_or(InvalidInstructionData)?;
+
+    if out_amount < min_out_amount {
+        // todo: add custom error message
+        return Err(InvalidInstructionData);
+    }
+
+    // todo: transfers
     Ok(())
 }
 
