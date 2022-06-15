@@ -227,7 +227,18 @@ pub fn calculate_deposit_amounts(pool_a_amount: u64, pool_b_amount: u64, lp_supp
 }
 
 pub fn calculate_swap_amounts(pool_in_amount: u64, pool_out_amount: u64, swap_in_amount: u64) -> Option<(u64)> {
-    todo!()
+    // x * y = k
+    // (x + a)(y - b) = k
+    // b = y * a / (x + a)
+    let swap_out_amount = (pool_out_amount as u128)
+        .checked_mul(swap_in_amount as u128)?
+        .checked_div(
+            pool_in_amount
+                .checked_add(swap_in_amount)?
+                .try_into().ok()?
+        )?.try_into().ok()?;
+
+    Some(swap_out_amount)
 }
 
 pub fn calculate_withdraw_amounts(pool_a_amount: u64, pool_b_amount: u64, lp_supply: u64,
@@ -331,6 +342,20 @@ mod tests {
         // todo: test input u64::MAX
 
         // todo: test for rounding error- printing money
+    }
+
+    #[test]
+    fn test_calculate_swap_amounts() {
+        assert_eq!(Some(0), calculate_swap_amounts(1, 100, 0));
+        assert_eq!(Some(0), calculate_swap_amounts(100, 10, 11));
+        assert_eq!(Some(1), calculate_swap_amounts(100_000_000, 100, 1_011_000));
+        assert_eq!(Some(4), calculate_swap_amounts(100, 100, 5));
+        assert_eq!(Some(49_950_049), calculate_swap_amounts(100_000_000_000, 50_000_000_000, 100_000_000));
+        assert_eq!(Some(372_208_436), calculate_swap_amounts(100_000_000_000, 50_000_000_000, 750_000_000));
+        assert_eq!(Some(3_333_333), calculate_swap_amounts(10_000_000, 10_000_000, 5_000_000));
+        assert_eq!(Some(6_666_666), calculate_swap_amounts(10_000_000, 10_000_000, 20_000_000));
+        assert_eq!(Some(8_000_000), calculate_swap_amounts(10_000_000, 10_000_000, 40_000_000));
+        assert_eq!(Some(12_990_906), calculate_swap_amounts(70_000_000, 13_000_000, 100_000_000_000));
     }
 
     #[test]
