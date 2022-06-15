@@ -271,7 +271,33 @@ fn process_swap(program_id: &Pubkey, accounts: &[AccountInfo], in_amount: u64, m
         return Err(InvalidInstructionData);
     }
 
-    // todo: transfers
+    transfer_spl_token(
+        input_source_info,
+        input_destination_info,
+        owner_info,
+        spl_token_program,
+        in_amount,
+    )?;
+
+    let withdraw_transfer_instruction = spl_token::instruction::transfer(
+        spl_token_program.key,
+        output_source_info.key,
+        output_destination_info.key,
+        swap_pool_state_info.key,
+        &[],
+        out_amount,
+    )?;
+    invoke_signed(
+        &withdraw_transfer_instruction,
+        &[
+            spl_token_program.clone(),
+            output_source_info.clone(),
+            output_destination_info.clone(),
+            swap_pool_state_info.clone(),
+        ],
+        &[&[&swap_pool_state.seed]],
+    )?;
+
     Ok(())
 }
 
