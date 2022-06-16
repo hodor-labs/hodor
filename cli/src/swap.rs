@@ -255,7 +255,7 @@ pub fn swap(context: Context, matches: &ArgMatches) -> Result<(), Error> {
     ).ok_or(format!("Failed to calculate expected swap out amount"))?;
 
     // todo: slippage control through CLI, for now hardcoded 1%
-    let mint_out_amount = expected_out_amount - (expected_out_amount / 100);
+    let min_out_amount = expected_out_amount - (expected_out_amount / 100);
 
     println!("Expected received token amount: {}",
              amount_to_ui_amount(expected_out_amount, out_source_acc.token_amount.decimals));
@@ -264,10 +264,7 @@ pub fn swap(context: Context, matches: &ArgMatches) -> Result<(), Error> {
 
     let instruction = Instruction::new_with_bytes(
         context.program_id,
-        &SwapInstruction::pack(&SwapInstruction::Swap {
-            in_amount: in_amount,
-            min_out_amount: mint_out_amount,
-        }),
+        &SwapInstruction::pack(&SwapInstruction::Swap { in_amount, min_out_amount, }),
         vec![
             AccountMeta::new(payer_keypair.pubkey(), true),
             AccountMeta::new_readonly(pool_key, false),
