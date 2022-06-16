@@ -1,5 +1,6 @@
 use std::str::FromStr;
 use clap::ArgMatches;
+use solana_account_decoder::parse_token::UiTokenAccount;
 use solana_program::instruction::{AccountMeta, Instruction};
 use solana_program::pubkey::Pubkey;
 use solana_sdk::account::ReadableAccount;
@@ -86,14 +87,11 @@ pub fn deposit(context: Context, matches: &ArgMatches) -> Result<(), Error> {
     let pool_key = Pubkey::from_str(matches.value_of("POOL-ACCOUNT").unwrap())
         .map_err(|_| format!("Invalid swap pool account"))?;
 
-    let pool_state = get_swap_pool_state(&context, &pool_key)?;
-
     // todo: should be part of context
     let payer_keypair = read_keypair_file(context.cli_config.keypair_path)?;
 
-    let pool_account_a = context.rpc_client.get_token_account_with_commitment(
-        &pool_state.token_account_a, context.commitment)?
-        .value.ok_or(format!("Failed to resolve pool token account A: {}", pool_state.token_account_a))?;
+    let (pool_state, pool_account_a, pool_account_b)
+        = get_pool_state_and_token_accounts(&context, &pool_key);
 
     let mint_a = Pubkey::from_str(&pool_account_a.mint)?;
 
@@ -105,10 +103,6 @@ pub fn deposit(context: Context, matches: &ArgMatches) -> Result<(), Error> {
     let source_account_a_key = get_associated_token_address(&payer_keypair.pubkey(), &mint_a);
 
     // todo: read account A state & check if enough balance
-
-    let pool_account_b = context.rpc_client.get_token_account_with_commitment(
-        &pool_state.token_account_b, context.commitment)?
-        .value.ok_or(format!("Failed to resolve pool token account B: {}", pool_state.token_account_b))?;
 
     let mint_b = Pubkey::from_str(&pool_account_b.mint)?;
 
@@ -170,17 +164,7 @@ pub fn print_info(context: Context, matches: &ArgMatches) -> Result<(), Error> {
     let pool_key = Pubkey::from_str(matches.value_of("POOL-ACCOUNT").unwrap())
         .map_err(|_| format!("Invalid swap pool account"))?;
 
-    let pool_state = get_swap_pool_state(&context, &pool_key)?;
-
-    let token_acc_a = context.rpc_client.get_token_account_with_commitment(
-        &pool_state.token_account_a,
-        context.commitment,
-    )?.value.ok_or(format!("Unexpected, unable to resolve token account: {}", pool_state.token_account_a))?;
-
-    let token_acc_b = context.rpc_client.get_token_account_with_commitment(
-        &pool_state.token_account_b,
-        context.commitment,
-    )?.value.ok_or(format!("Unexpected, unable to resolve token account: {}", pool_state.token_account_b))?;
+    let (pool_state, token_acc_a, token_acc_b) = get_pool_state_and_token_accounts(&context, &pool_key);
 
     println!("Token A:");
     println!("MINT: {}", token_acc_a.mint);
@@ -200,14 +184,77 @@ pub fn print_info(context: Context, matches: &ArgMatches) -> Result<(), Error> {
     Ok(())
 }
 
+pub fn swap(context: Context, matches: &ArgMatches) -> Result<(), Error> {
+    let pool_key = Pubkey::from_str(matches.value_of("POOL-ACCOUNT").unwrap())
+        .map_err(|_| format!("Invalid swap pool account"))?;
+
+    // todo: should be part of context
+    let payer_keypair = read_keypair_file(context.cli_config.keypair_path)?;
+
+    let (pool_state, pool_acc_a, pool_acc_b)
+        = get_pool_state_and_token_accounts(&context, &pool_key)?;
+
+    let pool_mint_a = Pubkey::from_str(&pool_acc_a.mint)?;
+    let pool_mint_b = Pubkey::from_str(&pool_acc_b.mint)?;
+
+    let input_account_key = Pubkey::from_str(matches.value_of("INPUT-ACCOUNT").unwrap())
+        .map_err(|_| format!("Invalid input account"))?;
+
+    let (in_source_key, in_destination_acc) = {
+        if input_account_key == pool_mint_a {
+            (
+                get_associated_token_address(&payer_keypair.pubkey(), &pool_mint_a),
+                pool_acc_a
+            )
+        } else if input_account_key == pool_mint_b {
+            (
+                get_associated_token_address(&payer_keypair.pubkey(), &pool_mint_b),
+                pool_acc_b
+            )
+        } else {
+            let input_account = context.rpc_client.get_token_account_with_commitment(
+                &input_account_key, context.commitment
+            )?.value.ok_or(format!("todo"))?;
+
+            // dev
+            println!("input account: {:?}", input_account);
+        }
+    };
+
+
+    // todo: determine mint of input
+
+
+    // todo read in_amount
+
+    // todo: slippage
+
+    let instruction = Instruction::new_with_bytes(
+        context.program_id,
+        &SwapInstruction::pack(&SwapInstruction::Swap {
+            in_amount: 0,
+            min_out_amount: 0,
+        }),
+        vec![
+            AccountMeta::new(payer_keypair.pubkey(), true),
+            AccountMeta::new_readonly(pool_key, false),
+            // todo: accounts from - to
+            AccountMeta::new_readonly(spl_token::id(), false),
+        ],
+    );
+
+    Ok(())
+}
+
 pub fn withdraw(context: Context, matches: &ArgMatches) -> Result<(), Error> {
     let pool_key = Pubkey::from_str(matches.value_of("POOL-ACCOUNT").unwrap())
         .map_err(|_| format!("Invalid swap pool account"))?;
 
-    let pool_state = get_swap_pool_state(&context, &pool_key)?;
-
     // todo: should be part of context
     let payer_keypair = read_keypair_file(context.cli_config.keypair_path)?;
+
+    let (pool_state, pool_account_a, pool_account_b)
+        = get_pool_state_and_token_accounts(&context, &pool_key);
 
     let lp_account_key = get_associated_token_address(
         &payer_keypair.pubkey(),
@@ -227,18 +274,10 @@ pub fn withdraw(context: Context, matches: &ArgMatches) -> Result<(), Error> {
 
     // todo: slippage
 
-    let pool_account_a = context.rpc_client.get_token_account_with_commitment(
-        &pool_state.token_account_a, context.commitment)?
-        .value.ok_or(format!("Failed to resolve pool token account A: {}", pool_state.token_account_a))?;
-
     let mint_a = Pubkey::from_str(&pool_account_a.mint)?;
 
     // todo: possibility to override through CLI param
     let destination_account_a_key = get_associated_token_address(&payer_keypair.pubkey(), &mint_a);
-
-    let pool_account_b = context.rpc_client.get_token_account_with_commitment(
-        &pool_state.token_account_b, context.commitment)?
-        .value.ok_or(format!("Failed to resolve pool token account B: {}", pool_state.token_account_b))?;
 
     let mint_b = Pubkey::from_str(&pool_account_b.mint)?;
 
@@ -252,7 +291,7 @@ pub fn withdraw(context: Context, matches: &ArgMatches) -> Result<(), Error> {
         &SwapInstruction::pack(&SwapInstruction::Withdraw {
             lp_amount,
             min_a: 0,
-            min_b: 0
+            min_b: 0,
         }),
         vec![
             AccountMeta::new(payer_keypair.pubkey(), true),
@@ -280,7 +319,7 @@ pub fn withdraw(context: Context, matches: &ArgMatches) -> Result<(), Error> {
     Ok(())
 }
 
-fn get_swap_pool_state(context: &Context, pool_state_account: &Pubkey) -> Result<SwapPool, Error> {
+fn get_pool_state(context: &Context, pool_state_account: &Pubkey) -> Result<SwapPool, Error> {
     let account = context.rpc_client.get_account_with_commitment(
         pool_state_account,
         context.commitment,
@@ -288,4 +327,23 @@ fn get_swap_pool_state(context: &Context, pool_state_account: &Pubkey) -> Result
 
     Ok(SwapPool::unpack(account.data())
         .map_err(|_| format!("Provided account is not a swap pool"))?)
+}
+
+fn get_pool_token_accounts(context: &Context, pool_state: &SwapPool) -> Result<(UiTokenAccount, UiTokenAccount), Error> {
+    let pool_account_a = context.rpc_client.get_token_account_with_commitment(
+        &pool_state.token_account_a, context.commitment)?
+        .value.ok_or(format!("Failed to resolve pool token account A: {}", pool_state.token_account_a))?;
+
+    let pool_account_b = context.rpc_client.get_token_account_with_commitment(
+        &pool_state.token_account_b, context.commitment)?
+        .value.ok_or(format!("Failed to resolve pool token account B: {}", pool_state.token_account_b))?;
+
+    Ok((pool_account_a, pool_account_b))
+}
+
+fn get_pool_state_and_token_accounts(context: &Context, pool_key: &Pubkey)
+                                     -> Result<(SwapPool, UiTokenAccount, UiTokenAccount), Error> {
+    let state = get_pool_state(context, pool_key)?;
+    let (acc_a, acc_b) = get_pool_token_accounts(context, &state)?;
+    Ok((state, acc_a, acc_b))
 }
