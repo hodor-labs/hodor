@@ -102,8 +102,8 @@ fn process_create_pool(program_id: &Pubkey, accounts: &[AccountInfo], seed: [u8;
         &spl_token_program.key,
         &lp_mint_account,
         &swap_state_info.key,
-        None, // todo: consider giving it to pool account (controllable later through DAO)
-        6, // todo: decide
+        None,
+        6,
     )?;
 
     invoke(
@@ -114,12 +114,11 @@ fn process_create_pool(program_id: &Pubkey, accounts: &[AccountInfo], seed: [u8;
         ],
     )?;
 
-    // For now this account is just marker, todo: put state
     let create_state_account_instruction = solana_program::system_instruction::create_account(
         &fee_payer_info.key,
         &swap_state_info.key,
-        rent.minimum_balance(SwapPool::SIZE),
-        SwapPool::SIZE as u64,
+        rent.minimum_balance(SwapPool::BASE_SIZE), // todo
+        SwapPool::BASE_SIZE as u64, // todo
         &program_id,
     );
 
@@ -139,6 +138,8 @@ fn process_create_pool(program_id: &Pubkey, accounts: &[AccountInfo], seed: [u8;
         token_account_a: *token_a_account_info.key,
         token_account_b: *token_b_account_info.key,
         lp_mint: lp_mint_account,
+        lp_fee_rate: 0, // todo
+        creator_fee: None // todo
     }.pack(&mut swap_state_info.try_borrow_mut_data()?)?;
 
     Ok(())
