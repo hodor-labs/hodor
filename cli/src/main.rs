@@ -44,7 +44,15 @@ fn main() {
                 .subcommand(
                     Command::new("swap")
                         .about("Swap tokens")
-                    // todo: args
+                        .arg(Arg::new("POOL-ACCOUNT").required(true).index(1))
+                        .arg(Arg::new("INPUT-ACCOUNT").required(true).index(2)
+                            .long_help("Mint or mint token account address which will be used as swap input. \
+                            If mint is provided associated token account will be used.")
+                        )
+                        .arg(
+                            Arg::new("INPUT-AMOUNT").required(true).index(3)
+                                .long_help("Amount of tokens to swap")
+                        )
                 )
                 .subcommand(
                     Command::new("withdraw")
@@ -85,6 +93,9 @@ fn main() {
                 }
                 Some(("info", matches)) => {
                     swap::print_info(context, matches)
+                }
+                Some(("swap", matches)) => {
+                    swap::swap(context, matches)
                 }
                 Some(("withdraw", matches)) => {
                     swap::withdraw(context, matches)
