@@ -8,7 +8,7 @@ use solana_sdk::signature::{Keypair, read_keypair_file};
 use solana_sdk::signer::Signer;
 use solana_sdk::transaction::Transaction;
 use spl_associated_token_account::get_associated_token_address;
-use spl_token::ui_amount_to_amount;
+use spl_token::{amount_to_ui_amount, ui_amount_to_amount};
 use hodor_program::swap::instruction::SwapInstruction;
 use hodor_program::swap::state::SwapPool;
 use crate::{Context, Error};
@@ -88,10 +88,10 @@ pub fn deposit(context: Context, matches: &ArgMatches) -> Result<(), Error> {
         .map_err(|_| format!("Invalid swap pool account"))?;
 
     // todo: should be part of context
-    let payer_keypair = read_keypair_file(context.cli_config.keypair_path)?;
+    let payer_keypair = read_keypair_file(&context.cli_config.keypair_path)?;
 
     let (pool_state, pool_account_a, pool_account_b)
-        = get_pool_state_and_token_accounts(&context, &pool_key);
+        = get_pool_state_and_token_accounts(&context, &pool_key)?;
 
     let mint_a = Pubkey::from_str(&pool_account_a.mint)?;
 
@@ -164,7 +164,8 @@ pub fn print_info(context: Context, matches: &ArgMatches) -> Result<(), Error> {
     let pool_key = Pubkey::from_str(matches.value_of("POOL-ACCOUNT").unwrap())
         .map_err(|_| format!("Invalid swap pool account"))?;
 
-    let (pool_state, token_acc_a, token_acc_b) = get_pool_state_and_token_accounts(&context, &pool_key);
+    let (pool_state, token_acc_a, token_acc_b)
+        = get_pool_state_and_token_accounts(&context, &pool_key)?;
 
     println!("Token A:");
     println!("MINT: {}", token_acc_a.mint);
@@ -189,7 +190,7 @@ pub fn swap(context: Context, matches: &ArgMatches) -> Result<(), Error> {
         .map_err(|_| format!("Invalid swap pool account"))?;
 
     // todo: should be part of context
-    let payer_keypair = read_keypair_file(context.cli_config.keypair_path)?;
+    let payer_keypair = read_keypair_file(&context.cli_config.keypair_path)?;
 
     let (pool_state, pool_acc_a, pool_acc_b)
         = get_pool_state_and_token_accounts(&context, &pool_key)?;
@@ -200,48 +201,93 @@ pub fn swap(context: Context, matches: &ArgMatches) -> Result<(), Error> {
     let input_account_key = Pubkey::from_str(matches.value_of("INPUT-ACCOUNT").unwrap())
         .map_err(|_| format!("Invalid input account"))?;
 
-    let (in_source_key, in_destination_acc) = {
+    let (in_source_key, in_destination_key, in_destination_acc) = {
         if input_account_key == pool_mint_a {
             (
                 get_associated_token_address(&payer_keypair.pubkey(), &pool_mint_a),
-                pool_acc_a
+                pool_state.token_account_a,
+                &pool_acc_a
             )
         } else if input_account_key == pool_mint_b {
             (
                 get_associated_token_address(&payer_keypair.pubkey(), &pool_mint_b),
-                pool_acc_b
+                pool_state.token_account_b,
+                &pool_acc_b
             )
         } else {
             let input_account = context.rpc_client.get_token_account_with_commitment(
-                &input_account_key, context.commitment
-            )?.value.ok_or(format!("todo"))?;
+                &input_account_key, context.commitment,
+            )?.value.ok_or(format!("Provided token account: {} doesn't exist", input_account_key))?;
 
-            // dev
-            println!("input account: {:?}", input_account);
+            let mint = Pubkey::from_str(&input_account.mint)?;
+
+            if mint == pool_mint_a {
+                (input_account_key, pool_state.token_account_a, &pool_acc_a)
+            } else if mint == pool_mint_b {
+                (input_account_key, pool_state.token_account_b, &pool_acc_b)
+            } else {
+                return Err(format!("Provided token account is of incorrect mint").try_into()?);
+            }
         }
     };
 
+    let (out_source_key, out_source_acc) = if in_destination_key == pool_state.token_account_a {
+        (pool_state.token_account_b, &pool_acc_b)
+    } else {
+        (pool_state.token_account_a, &pool_acc_a)
+    };
 
-    // todo: determine mint of input
+    let out_destination_key = {
+        // todo: possibility to set through CLI
+        let mint = Pubkey::from_str(&out_source_acc.mint)?;
+        get_associated_token_address(&payer_keypair.pubkey(), &mint)
+    };
 
+    let in_amount = matches.value_of("INPUT-AMOUNT")
+        .map(|v| f64::from_str(v).map_err(|_| format!("Provided input amount is incorrect")))
+        .ok_or(format!("Missing input amount"))?
+        .map(|v| ui_amount_to_amount(v, in_destination_acc.token_amount.decimals))?;
 
-    // todo read in_amount
+    let expected_out_amount = hodor_program::swap::instruction::calculate_swap_amounts(
+        u64::from_str(in_destination_acc.token_amount.amount.as_str())?,
+        u64::from_str(out_source_acc.token_amount.amount.as_str())?,
+        in_amount,
+    ).ok_or(format!("Failed to calculate expected swap out amount"))?;
 
-    // todo: slippage
+    // todo: slippage control through CLI, for now hardcoded 1%
+    let mint_out_amount = expected_out_amount - (expected_out_amount / 100);
+
+    println!("Expected received token amount: {}",
+             amount_to_ui_amount(expected_out_amount, out_source_acc.token_amount.decimals));
+
+    // todo: Prompt to accept expected amount
 
     let instruction = Instruction::new_with_bytes(
         context.program_id,
         &SwapInstruction::pack(&SwapInstruction::Swap {
-            in_amount: 0,
-            min_out_amount: 0,
+            in_amount: in_amount,
+            min_out_amount: mint_out_amount,
         }),
         vec![
             AccountMeta::new(payer_keypair.pubkey(), true),
             AccountMeta::new_readonly(pool_key, false),
-            // todo: accounts from - to
+            AccountMeta::new(in_source_key, false),
+            AccountMeta::new(in_destination_key, false),
+            AccountMeta::new(out_source_key, false),
+            AccountMeta::new(out_destination_key, false),
             AccountMeta::new_readonly(spl_token::id(), false),
         ],
     );
+
+    let transaction = Transaction::new_signed_with_payer(
+        &[instruction],
+        Some(&payer_keypair.pubkey()),
+        &[&payer_keypair],
+        context.rpc_client.get_latest_blockhash()?,
+    );
+
+    let transaction_result = context.rpc_client.send_and_confirm_transaction(&transaction);
+    println!("Transaction {:?}", transaction_result);
 
     Ok(())
 }
@@ -251,10 +297,10 @@ pub fn withdraw(context: Context, matches: &ArgMatches) -> Result<(), Error> {
         .map_err(|_| format!("Invalid swap pool account"))?;
 
     // todo: should be part of context
-    let payer_keypair = read_keypair_file(context.cli_config.keypair_path)?;
+    let payer_keypair = read_keypair_file(&context.cli_config.keypair_path)?;
 
     let (pool_state, pool_account_a, pool_account_b)
-        = get_pool_state_and_token_accounts(&context, &pool_key);
+        = get_pool_state_and_token_accounts(&context, &pool_key)?;
 
     let lp_account_key = get_associated_token_address(
         &payer_keypair.pubkey(),
