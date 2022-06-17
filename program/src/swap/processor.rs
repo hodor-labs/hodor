@@ -8,15 +8,15 @@ use solana_program::rent::Rent;
 use solana_program::sysvar::Sysvar;
 use spl_token::state::{Account, Mint};
 use solana_program::program_error::ProgramError::{IllegalOwner, InvalidAccountData, InvalidInstructionData, MissingRequiredSignature};
-use crate::swap::state::SwapPool;
+use crate::swap::state::{CreatorFee, SwapPool};
 use crate::swap::instruction::{calculate_deposit_amounts, calculate_swap_amounts, calculate_withdraw_amounts, SwapInstruction};
 use crate::processor::{create_spl_token_account, transfer_spl_token};
 
 pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], instruction_data: &[u8]) -> ProgramResult {
     match SwapInstruction::unpack(instruction_data)? {
-        SwapInstruction::CreatePool { seed } => {
+        SwapInstruction::CreatePool { seed, lp_fee_rate, creator_fee_rate } => {
             msg!("Swap:CreatePool");
-            process_create_pool(program_id, accounts, seed)
+            process_create_pool(program_id, accounts, seed, lp_fee_rate, creator_fee_rate)
         }
         SwapInstruction::Swap { in_amount, min_out_amount } => {
             msg!("Swap:Swap");
@@ -33,7 +33,8 @@ pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], instruction_data: 
     }
 }
 
-fn process_create_pool(program_id: &Pubkey, accounts: &[AccountInfo], seed: [u8; 32]) -> ProgramResult {
+fn process_create_pool(program_id: &Pubkey, accounts: &[AccountInfo], seed: [u8; 32],
+                       lp_fee_rate: u32, creator_fee_rate: u32) -> ProgramResult {
     let accounts_iter = &mut accounts.iter();
 
     let fee_payer_info = next_account_info(accounts_iter)?;
@@ -48,6 +49,10 @@ fn process_create_pool(program_id: &Pubkey, accounts: &[AccountInfo], seed: [u8;
     let system_program = next_account_info(accounts_iter)?;
 
     let rent = Rent::get()?;
+
+    if !fee_payer_info.is_signer {
+        return Err(MissingRequiredSignature);
+    }
 
     if token_a_mint_info.key == token_b_mint_info.key {
         return Err(InvalidAccountData);
@@ -114,11 +119,25 @@ fn process_create_pool(program_id: &Pubkey, accounts: &[AccountInfo], seed: [u8;
         ],
     )?;
 
+    let (creator_fee, state_size) = {
+        if creator_fee_rate > 0 {
+            (Some(CreatorFee {
+                rate: creator_fee_rate,
+                balance_a: 0,
+                balance_b: 0,
+                withdraw_authority: fee_payer_info.key.clone(),
+            }), SwapPool::WITH_CREATOR_FEE_SIZE)
+        } else {
+            (None, SwapPool::BASE_SIZE)
+        }
+    };
+
+
     let create_state_account_instruction = solana_program::system_instruction::create_account(
         &fee_payer_info.key,
         &swap_state_info.key,
-        rent.minimum_balance(SwapPool::BASE_SIZE), // todo
-        SwapPool::BASE_SIZE as u64, // todo
+        rent.minimum_balance(state_size),
+        state_size as u64,
         &program_id,
     );
 
@@ -137,9 +156,11 @@ fn process_create_pool(program_id: &Pubkey, accounts: &[AccountInfo], seed: [u8;
         seed: seed,
         token_account_a: *token_a_account_info.key,
         token_account_b: *token_b_account_info.key,
+        balance_a: 0,
+        balance_b: 0,
         lp_mint: lp_mint_account,
-        lp_fee_rate: 0, // todo
-        creator_fee: None // todo
+        lp_fee_rate,
+        creator_fee: creator_fee,
     }.pack(&mut swap_state_info.try_borrow_mut_data()?)?;
 
     Ok(())
@@ -168,7 +189,7 @@ fn process_deposit(program_id: &Pubkey, accounts: &[AccountInfo], min_a: u64, ma
         return Err(IllegalOwner);
     }
 
-    let swap_pool_state = SwapPool::unpack(&swap_pool_state_info.try_borrow_data()?)?;
+    let mut swap_pool_state = SwapPool::unpack(&swap_pool_state_info.try_borrow_data()?)?;
     if swap_pool_state.token_account_a != *destination_a_info.key
         || swap_pool_state.token_account_b != *destination_b_info.key
         || swap_pool_state.lp_mint != *lp_mint_info.key {
@@ -176,12 +197,10 @@ fn process_deposit(program_id: &Pubkey, accounts: &[AccountInfo], min_a: u64, ma
     }
 
     let lp_mint_state = Mint::unpack(&lp_mint_info.try_borrow_data()?)?;
-    let destination_a_account_state = Account::unpack(&destination_a_info.try_borrow_data()?)?;
-    let destination_b_account_state = Account::unpack(&destination_b_info.try_borrow_data()?)?;
 
     let (token_a_transfer_amount, token_b_transfer_amount, lp_mint_amount) = calculate_deposit_amounts(
-        destination_a_account_state.amount,
-        destination_b_account_state.amount,
+        swap_pool_state.balance_a,
+        swap_pool_state.balance_b,
         lp_mint_state.supply,
         max_a,
         max_b).ok_or(InvalidInstructionData)?;
@@ -227,6 +246,15 @@ fn process_deposit(program_id: &Pubkey, accounts: &[AccountInfo], min_a: u64, ma
         &[&[&swap_pool_state.seed]],
     )?;
 
+
+    swap_pool_state.balance_a = swap_pool_state.balance_a
+        .checked_add(token_a_transfer_amount)
+        .ok_or(InvalidInstructionData)?;
+    swap_pool_state.balance_b = swap_pool_state.balance_b
+        .checked_add(token_b_transfer_amount)
+        .ok_or(InvalidInstructionData)?;
+    swap_pool_state.pack(&mut swap_pool_state_info.try_borrow_mut_data()?)?;
+
     Ok(())
 }
 
@@ -249,23 +277,39 @@ fn process_swap(program_id: &Pubkey, accounts: &[AccountInfo], in_amount: u64, m
         return Err(IllegalOwner);
     }
 
-    let swap_pool_state = SwapPool::unpack(&swap_pool_state_info.try_borrow_data()?)?;
+    let mut swap_pool_state = SwapPool::unpack(&swap_pool_state_info.try_borrow_data()?)?;
 
     // todo: this conditions need to be unit tested
-    if !(
-        (*input_destination_info.key == swap_pool_state.token_account_a && *output_source_info.key == swap_pool_state.token_account_b)
-            || (*input_destination_info.key == swap_pool_state.token_account_b && *output_source_info.key == swap_pool_state.token_account_a)) {
-        return Err(InvalidAccountData);
-    }
+    let is_a_to_b = {
+        if *input_destination_info.key == swap_pool_state.token_account_a
+            && *output_source_info.key == swap_pool_state.token_account_b {
+            true
+        } else if *input_destination_info.key == swap_pool_state.token_account_b
+            && *output_source_info.key == swap_pool_state.token_account_a {
+            false
+        } else {
+            return Err(InvalidAccountData);
+        }
+    };
 
     let input_destination_state = Account::unpack(&input_destination_info.try_borrow_data()?)?;
     let output_source_state = Account::unpack(&output_source_info.try_borrow_data()?)?;
 
+    let (pool_balance_in_token, pool_balance_out_token) = if is_a_to_b {
+        (swap_pool_state.balance_a, swap_pool_state.balance_b)
+    } else {
+        (swap_pool_state.balance_b, swap_pool_state.balance_a)
+    };
 
-    let (out_amount) = calculate_swap_amounts(
-        input_destination_state.amount,
-        output_source_state.amount,
-        in_amount).ok_or(InvalidInstructionData)?;
+    let (out_amount, dao_fee_amount, lp_fee_amount, creator_fee_amount) = calculate_swap_amounts(
+        pool_balance_in_token,
+        pool_balance_out_token,
+        in_amount,
+        50_000, // hardcoded 0.05%, todo: read from dao controlled config account
+        swap_pool_state.lp_fee_rate,
+        swap_pool_state.creator_fee.as_ref()
+            .map_or(0, |cf| cf.rate),
+    ).ok_or(InvalidInstructionData)?;
 
     if out_amount < min_out_amount {
         // todo: add custom error message
@@ -299,6 +343,39 @@ fn process_swap(program_id: &Pubkey, accounts: &[AccountInfo], in_amount: u64, m
         &[&[&swap_pool_state.seed]],
     )?;
 
+    let pool_deposit_amount = in_amount
+        .checked_sub(dao_fee_amount)
+        .ok_or(InvalidInstructionData)?
+        .checked_sub(creator_fee_amount)
+        .ok_or(InvalidInstructionData)?;
+
+    if is_a_to_b {
+        swap_pool_state.balance_a = swap_pool_state.balance_a
+            .checked_add(pool_deposit_amount)
+            .ok_or(InvalidInstructionData)?;
+        swap_pool_state.balance_b = swap_pool_state.balance_b
+            .checked_sub(out_amount)
+            .ok_or(InvalidInstructionData)?;
+    } else {
+        swap_pool_state.balance_b = swap_pool_state.balance_b
+            .checked_add(pool_deposit_amount)
+            .ok_or(InvalidInstructionData)?;
+        swap_pool_state.balance_a = swap_pool_state.balance_a
+            .checked_sub(out_amount)
+            .ok_or(InvalidInstructionData)?;
+    }
+
+    if let Some(creator_fee) = &mut swap_pool_state.creator_fee {
+        if is_a_to_b {
+            creator_fee.balance_a = creator_fee.balance_a.checked_add(creator_fee_amount)
+                .ok_or(InvalidInstructionData)?;
+        } else {
+            creator_fee.balance_b = creator_fee.balance_b.checked_add(creator_fee_amount)
+                .ok_or(InvalidInstructionData)?;
+        }
+    }
+    swap_pool_state.pack(&mut swap_pool_state_info.try_borrow_mut_data()?)?;
+
     Ok(())
 }
 
@@ -323,7 +400,7 @@ fn process_wthdraw(program_id: &Pubkey, accounts: &[AccountInfo], lp_amount: u64
         return Err(IllegalOwner);
     }
 
-    let swap_pool_state = SwapPool::unpack(&swap_pool_state_info.try_borrow_data()?)?;
+    let mut swap_pool_state = SwapPool::unpack(&swap_pool_state_info.try_borrow_data()?)?;
     if swap_pool_state.token_account_a != *source_a_info.key
         || swap_pool_state.token_account_b != *source_b_info.key
         || swap_pool_state.lp_mint != *lp_mint_info.key {
@@ -331,12 +408,10 @@ fn process_wthdraw(program_id: &Pubkey, accounts: &[AccountInfo], lp_amount: u64
     }
 
     let lp_mint_state = Mint::unpack(&lp_mint_info.try_borrow_data()?)?;
-    let source_a_account_state = Account::unpack(&source_a_info.try_borrow_data()?)?;
-    let source_b_account_state = Account::unpack(&source_b_info.try_borrow_data()?)?;
 
     let (withdraw_a_amount, withdraw_b_amount) = calculate_withdraw_amounts(
-        source_a_account_state.amount,
-        source_b_account_state.amount,
+        swap_pool_state.balance_a,
+        swap_pool_state.balance_b,
         lp_mint_state.supply,
         lp_amount,
     ).ok_or(InvalidInstructionData)?;
@@ -345,7 +420,6 @@ fn process_wthdraw(program_id: &Pubkey, accounts: &[AccountInfo], lp_amount: u64
         // todo: add custom error message
         return Err(InvalidInstructionData);
     }
-
 
     // todo: test burning of more than provided account have
     let burn_instruction = spl_token::instruction::burn(
@@ -404,6 +478,14 @@ fn process_wthdraw(program_id: &Pubkey, accounts: &[AccountInfo], lp_amount: u64
         ],
         &[&[&swap_pool_state.seed]],
     )?;
+
+    swap_pool_state.balance_a = swap_pool_state.balance_a
+        .checked_sub(withdraw_a_amount)
+        .ok_or(InvalidInstructionData)?;
+    swap_pool_state.balance_b = swap_pool_state.balance_b
+        .checked_sub(withdraw_b_amount)
+        .ok_or(InvalidInstructionData)?;
+    swap_pool_state.pack(&mut swap_pool_state_info.try_borrow_mut_data()?)?;
 
     Ok(())
 }

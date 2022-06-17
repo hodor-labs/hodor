@@ -3,42 +3,42 @@ use solana_program::program_error::ProgramError::InvalidInstructionData;
 
 #[derive(Debug, PartialEq)]
 pub enum SwapInstruction {
-    // 10
+    // 1-0
     // Create swap pool
-    // 0. [signer] Fee payer
+    // 0. [signer] Fee payer, swap pool creator
     // 1. [writeable] Swap pool state account - PDA
     // 2. [] Token A mint
     // 3. [writeable] Token A pool account
     // 4. [] Token B mint
     // 5. [writeable] Token B pool account
     // 6. [writeable] LP mint
-    // todo: fee account
     // 7. [] SPL token program
     // 8. [] System program
     CreatePool {
         seed: [u8; 32],
-        // todo feeRate - %
+        lp_fee_rate: u32,
+        creator_fee_rate: u32,
     },
 
-    // 11
+    // 1-1
     // Swap tokens
     // 0. [signer] Fee payer, token accounts owner
-    // 1. [] Swap pool state account - PDA
+    // 1. [writeable] Swap pool state account - PDA
     // 2. [writeable] Source input token account
     // 3. [writeable] Destination input token account
     // 4. [writeable] Source output token account
     // 5. [writeable] Destination output token account
-    // todo: fee accounts
     // 6. [] SPL token program
+    // todo: add hodor config account - read dao fee rate from it
     Swap {
         in_amount: u64,
         min_out_amount: u64,
     },
 
-    // 12
+    // 1-2
     // Deposit into pool
     // 0. [signer] Fee payer, token accounts owner
-    // 1. [] Swap pool state account - PDA
+    // 1. [writeable] Swap pool state account - PDA
     // 2. [writeable] Source token A account
     // 3. [writeable] Destination token A account
     // 4. [writeable] Source token B account
@@ -54,10 +54,10 @@ pub enum SwapInstruction {
         max_b: u64,
     },
 
-    // 13
+    // 1-3
     // Withdraw tokens from pool
     // 0. [signer] Fee payer, token accounts owner
-    // 1. [] Swap pool state account - PDA
+    // 1. [writeable] Swap pool state account - PDA
     // 2. [writeable] Source token A account
     // 3. [writeable] Destination token A account
     // 4. [writeable] Source token B account
@@ -70,6 +70,9 @@ pub enum SwapInstruction {
         min_a: u64,
         min_b: u64,
     },
+
+    // 1-4 ChangeCreatorWithdrawAuthority
+    // 1-5 WithdrawCreatorFee
 }
 
 // todo: unit test pack/unpack swap instruction
@@ -81,9 +84,11 @@ impl SwapInstruction {
         buffer.push(SwapInstruction::MODULE_TAG);
 
         match self {
-            SwapInstruction::CreatePool { seed } => {
+            SwapInstruction::CreatePool { seed, lp_fee_rate, creator_fee_rate } => {
                 buffer.push(0);
                 buffer.extend_from_slice(seed);
+                buffer.extend_from_slice(&lp_fee_rate.to_le_bytes());
+                buffer.extend_from_slice(&creator_fee_rate.to_le_bytes());
             }
             SwapInstruction::Swap { in_amount, min_out_amount } => {
                 buffer.push(1);
@@ -123,7 +128,17 @@ impl SwapInstruction {
                     .and_then(|slice| slice.try_into().ok())
                     .ok_or(InvalidInstructionData)?;
 
-                Ok(SwapInstruction::CreatePool { seed })
+                let lp_fee_rate = rest.get(32..36)
+                    .and_then(|slice| slice.try_into().ok())
+                    .map(u32::from_le_bytes)
+                    .ok_or(InvalidInstructionData)?;
+
+                let creator_fee_rate = rest.get(36..40)
+                    .and_then(|slice| slice.try_into().ok())
+                    .map(u32::from_le_bytes)
+                    .ok_or(InvalidInstructionData)?;
+
+                Ok(SwapInstruction::CreatePool { seed, lp_fee_rate, creator_fee_rate })
             }
             1 => {
                 let in_amount = rest.get(..8)
@@ -226,19 +241,49 @@ pub fn calculate_deposit_amounts(pool_a_amount: u64, pool_b_amount: u64, lp_supp
     Some((deposit_a, deposit_b, lp_mint_amount))
 }
 
-pub fn calculate_swap_amounts(pool_in_amount: u64, pool_out_amount: u64, swap_in_amount: u64) -> Option<(u64)> {
+const FEE_RATE_BASE_DIVIDER: u128 = 100_000_000;
+
+fn calculate_fee_amount(amount: u128, fee_rate: u32) -> Option<u128> {
+    Some(if fee_rate == 0 {
+        0
+    } else {
+        amount
+            .checked_mul(fee_rate as u128)?
+            .checked_div(FEE_RATE_BASE_DIVIDER)?
+    })
+}
+
+pub fn calculate_swap_amounts(pool_balance_in_token: u64, pool_balance_out_token: u64, swap_in_amount: u64,
+                              dao_fee_rate: u32, lp_fee_rate: u32, creator_fee_rate: u32) -> Option<(u64, u64, u64, u64)> {
+    let swap_in_amount = swap_in_amount as u128;
+
+    let dao_fee_amount = calculate_fee_amount(swap_in_amount, dao_fee_rate)?;
+    let lp_fee_amount = calculate_fee_amount(swap_in_amount, lp_fee_rate)?;
+    let creator_fee_amount = calculate_fee_amount(swap_in_amount, creator_fee_rate)?;
+
+    let pool_balance_in_token_after_fees = (pool_balance_in_token as u128)
+        .checked_add(lp_fee_amount)?;
+    let swap_in_amount_after_fees = swap_in_amount
+        .checked_sub(dao_fee_amount)?
+        .checked_sub(lp_fee_amount)?
+        .checked_sub(creator_fee_amount)?;
+
     // x * y = k
     // (x + a)(y - b) = k
     // b = y * a / (x + a)
-    let swap_out_amount = (pool_out_amount as u128)
-        .checked_mul(swap_in_amount as u128)?
+    let swap_out_amount = (pool_balance_out_token as u128)
+        .checked_mul(swap_in_amount_after_fees)?
         .checked_div(
-            pool_in_amount
-                .checked_add(swap_in_amount)?
-                .try_into().ok()?
-        )?.try_into().ok()?;
+            pool_balance_in_token_after_fees
+                .checked_add(swap_in_amount_after_fees)?
+        )?;
 
-    Some(swap_out_amount)
+    Some((
+        swap_out_amount.try_into().ok()?,
+        dao_fee_amount.try_into().ok()?,
+        lp_fee_amount.try_into().ok()?,
+        creator_fee_amount.try_into().ok()?
+    ))
 }
 
 pub fn calculate_withdraw_amounts(pool_a_amount: u64, pool_b_amount: u64, lp_supply: u64,
@@ -272,10 +317,16 @@ mod tests {
 
     #[test]
     fn test_pack_unpack_swap_instruction() {
-        let create_instruction = SwapInstruction::CreatePool { seed: Pubkey::new_unique().to_bytes() };
+        let create_instruction = SwapInstruction::CreatePool {
+            seed: Pubkey::new_unique().to_bytes(),
+            lp_fee_rate: 5,
+            creator_fee_rate: 60,
+        };
         assert_eq!(create_instruction, SwapInstruction::unpack(&create_instruction.pack()).unwrap());
         assert_ne!(create_instruction, SwapInstruction::unpack(&SwapInstruction::CreatePool {
-            seed: Default::default()
+            seed: Default::default(),
+            lp_fee_rate: 0,
+            creator_fee_rate: 0,
         }.pack()).unwrap());
 
 
@@ -345,17 +396,50 @@ mod tests {
     }
 
     #[test]
-    fn test_calculate_swap_amounts() {
-        assert_eq!(Some(0), calculate_swap_amounts(1, 100, 0));
-        assert_eq!(Some(0), calculate_swap_amounts(100, 10, 11));
-        assert_eq!(Some(1), calculate_swap_amounts(100_000_000, 100, 1_011_000));
-        assert_eq!(Some(4), calculate_swap_amounts(100, 100, 5));
-        assert_eq!(Some(49_950_049), calculate_swap_amounts(100_000_000_000, 50_000_000_000, 100_000_000));
-        assert_eq!(Some(372_208_436), calculate_swap_amounts(100_000_000_000, 50_000_000_000, 750_000_000));
-        assert_eq!(Some(3_333_333), calculate_swap_amounts(10_000_000, 10_000_000, 5_000_000));
-        assert_eq!(Some(6_666_666), calculate_swap_amounts(10_000_000, 10_000_000, 20_000_000));
-        assert_eq!(Some(8_000_000), calculate_swap_amounts(10_000_000, 10_000_000, 40_000_000));
-        assert_eq!(Some(12_990_906), calculate_swap_amounts(70_000_000, 13_000_000, 100_000_000_000));
+    fn test_calculate_swap_amounts_with_fees() {
+        // 1% for every fee type
+        assert_eq!(
+            Some((88_342, 1_000, 1_000, 1_000)),
+            calculate_swap_amounts(1_000_000, 1_000_000, 100_000,
+                                   1_000_000, 1_000_000, 1_000_000)
+        );
+
+        // 90.99% fee
+        assert_eq!(
+            Some((8920, 90000, 990, 0)),
+            calculate_swap_amounts(1_000_000, 1_000_000, 100_000,
+                                   90_000_000, 990_000, 0)
+        );
+
+        // 90.99% fee
+        assert_eq!(
+            Some((8198, 990, 90000, 0)),
+            calculate_swap_amounts(1_000_000, 1_000_000, 100_000,
+                                   990_000, 90_000_000, 0)
+        );
+
+        // over 100% total fee
+        assert_eq!(
+            None,
+            calculate_swap_amounts(1_000_000, 1_000_000, 100_000,
+                                   50_000_000, 50_000_000, 1_000_000)
+        );
+
+        // todo: add more unit tests
+    }
+
+    #[test]
+    fn test_calculate_swap_amounts_without_fees() {
+        assert_eq!(Some((0, 0, 0, 0)), calculate_swap_amounts(1, 100, 0, 0, 0, 0));
+        assert_eq!(Some((0, 0, 0, 0)), calculate_swap_amounts(100, 10, 11, 0, 0, 0));
+        assert_eq!(Some((1, 0, 0, 0)), calculate_swap_amounts(100_000_000, 100, 1_011_000, 0, 0, 0));
+        assert_eq!(Some((4, 0, 0, 0)), calculate_swap_amounts(100, 100, 5, 0, 0, 0));
+        assert_eq!(Some((49_950_049, 0, 0, 0)), calculate_swap_amounts(100_000_000_000, 50_000_000_000, 100_000_000, 0, 0, 0));
+        assert_eq!(Some((372_208_436, 0, 0, 0)), calculate_swap_amounts(100_000_000_000, 50_000_000_000, 750_000_000, 0, 0, 0));
+        assert_eq!(Some((3_333_333, 0, 0, 0)), calculate_swap_amounts(10_000_000, 10_000_000, 5_000_000, 0, 0, 0));
+        assert_eq!(Some((6_666_666, 0, 0, 0)), calculate_swap_amounts(10_000_000, 10_000_000, 20_000_000, 0, 0, 0));
+        assert_eq!(Some((8_000_000, 0, 0, 0)), calculate_swap_amounts(10_000_000, 10_000_000, 40_000_000, 0, 0, 0));
+        assert_eq!(Some((12_990_906, 0, 0, 0)), calculate_swap_amounts(70_000_000, 13_000_000, 100_000_000_000, 0, 0, 0));
     }
 
     #[test]
