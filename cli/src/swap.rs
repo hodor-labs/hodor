@@ -20,6 +20,12 @@ pub fn create_pool(context: Context, matches: &ArgMatches) -> Result<(), Error> 
     let mint_b = Pubkey::from_str(matches.value_of("TOKEN-B").unwrap())
         .map_err(|_| format!("Invalid token address"))?;
 
+    let lp_fee_rate = (f64::from_str(matches.value_of("LP-FEE-RATE").unwrap())? * 1_000_000 as f64) as u32;
+    let creator_fee_rate = matches.value_of("CREATOR-FEE-RATE")
+        .map_or(Ok(0 as u32), |v| {
+            f64::from_str(v).map(|v| (v * 1_000_000 as f64) as u32)
+        })?;
+
     // todo: should be part of context
     let payer_keypair = read_keypair_file(context.cli_config.keypair_path)?;
 
@@ -56,7 +62,7 @@ pub fn create_pool(context: Context, matches: &ArgMatches) -> Result<(), Error> 
 
     let create_swap_pool_instruction = Instruction::new_with_bytes(
         context.program_id,
-        &SwapInstruction::pack(&SwapInstruction::CreatePool { seed }),
+        &SwapInstruction::pack(&SwapInstruction::CreatePool { seed, lp_fee_rate, creator_fee_rate }),
         vec![
             AccountMeta::new(payer_keypair.pubkey(), true),
             AccountMeta::new(state_account, false),
@@ -136,7 +142,7 @@ pub fn deposit(context: Context, matches: &ArgMatches) -> Result<(), Error> {
         &SwapInstruction::pack(&SwapInstruction::Deposit { min_a, max_a: amount_a, min_b, max_b: amount_b }),
         vec![
             AccountMeta::new(payer_keypair.pubkey(), true),
-            AccountMeta::new_readonly(pool_key, false),
+            AccountMeta::new(pool_key, false),
             AccountMeta::new(source_account_a_key, false),
             AccountMeta::new(pool_state.token_account_a, false),
             AccountMeta::new(source_account_b_key, false),
@@ -231,10 +237,11 @@ pub fn swap(context: Context, matches: &ArgMatches) -> Result<(), Error> {
         }
     };
 
-    let (out_source_key, out_source_acc) = if in_destination_key == pool_state.token_account_a {
-        (pool_state.token_account_b, &pool_acc_b)
+    let (out_source_key, out_source_acc, pool_balance_in, pool_balance_out)
+        = if in_destination_key == pool_state.token_account_a {
+        (pool_state.token_account_b, &pool_acc_b, pool_state.balance_a, pool_state.balance_b)
     } else {
-        (pool_state.token_account_a, &pool_acc_a)
+        (pool_state.token_account_a, &pool_acc_a, pool_state.balance_b, pool_state.balance_a)
     };
 
     let out_destination_key = {
@@ -248,10 +255,14 @@ pub fn swap(context: Context, matches: &ArgMatches) -> Result<(), Error> {
         .ok_or(format!("Missing input amount"))?
         .map(|v| ui_amount_to_amount(v, in_destination_acc.token_amount.decimals))?;
 
-    let expected_out_amount = hodor_program::swap::instruction::calculate_swap_amounts(
-        u64::from_str(in_destination_acc.token_amount.amount.as_str())?,
-        u64::from_str(out_source_acc.token_amount.amount.as_str())?,
+    let (expected_out_amount, _, _, _) = hodor_program::swap::instruction::calculate_swap_amounts(
+        pool_balance_in,
+        pool_balance_out,
         in_amount,
+        50_000, // hardcoded 0.05% - needs to be read from config acc
+        pool_state.lp_fee_rate,
+        pool_state.creator_fee.as_ref()
+            .map_or(0, |cf| cf.rate)
     ).ok_or(format!("Failed to calculate expected swap out amount"))?;
 
     // todo: slippage control through CLI, for now hardcoded 1%
@@ -264,10 +275,10 @@ pub fn swap(context: Context, matches: &ArgMatches) -> Result<(), Error> {
 
     let instruction = Instruction::new_with_bytes(
         context.program_id,
-        &SwapInstruction::pack(&SwapInstruction::Swap { in_amount, min_out_amount, }),
+        &SwapInstruction::pack(&SwapInstruction::Swap { in_amount, min_out_amount }),
         vec![
             AccountMeta::new(payer_keypair.pubkey(), true),
-            AccountMeta::new_readonly(pool_key, false),
+            AccountMeta::new(pool_key, false),
             AccountMeta::new(in_source_key, false),
             AccountMeta::new(in_destination_key, false),
             AccountMeta::new(out_source_key, false),
@@ -338,7 +349,7 @@ pub fn withdraw(context: Context, matches: &ArgMatches) -> Result<(), Error> {
         }),
         vec![
             AccountMeta::new(payer_keypair.pubkey(), true),
-            AccountMeta::new_readonly(pool_key, false),
+            AccountMeta::new(pool_key, false),
             AccountMeta::new(pool_state.token_account_a, false),
             AccountMeta::new(destination_account_a_key, false),
             AccountMeta::new(pool_state.token_account_b, false),

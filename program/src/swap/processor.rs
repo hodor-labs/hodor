@@ -6,7 +6,7 @@ use solana_program::pubkey::Pubkey;
 use solana_program::program_pack::Pack;
 use solana_program::rent::Rent;
 use solana_program::sysvar::Sysvar;
-use spl_token::state::{Account, Mint};
+use spl_token::state::Mint;
 use solana_program::program_error::ProgramError::{IllegalOwner, InvalidAccountData, InvalidInstructionData, MissingRequiredSignature};
 use crate::swap::state::{CreatorFee, SwapPool};
 use crate::swap::instruction::{calculate_deposit_amounts, calculate_swap_amounts, calculate_withdraw_amounts, SwapInstruction};
@@ -292,16 +292,13 @@ fn process_swap(program_id: &Pubkey, accounts: &[AccountInfo], in_amount: u64, m
         }
     };
 
-    let input_destination_state = Account::unpack(&input_destination_info.try_borrow_data()?)?;
-    let output_source_state = Account::unpack(&output_source_info.try_borrow_data()?)?;
-
     let (pool_balance_in_token, pool_balance_out_token) = if is_a_to_b {
         (swap_pool_state.balance_a, swap_pool_state.balance_b)
     } else {
         (swap_pool_state.balance_b, swap_pool_state.balance_a)
     };
 
-    let (out_amount, dao_fee_amount, lp_fee_amount, creator_fee_amount) = calculate_swap_amounts(
+    let (out_amount, dao_fee_amount, _lp_fee_amount, creator_fee_amount) = calculate_swap_amounts(
         pool_balance_in_token,
         pool_balance_out_token,
         in_amount,

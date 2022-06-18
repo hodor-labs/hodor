@@ -27,7 +27,8 @@ fn main() {
                         .about("Create new swap pool")
                         .arg(Arg::new("TOKEN-A").required(true).index(1))
                         .arg(Arg::new("TOKEN-B").required(true).index(2))
-                    // todo: fee - defaults to 0
+                        .arg(Arg::new("LP-FEE-RATE").required(true).index(3))
+                        .arg(Arg::new("CREATOR-FEE-RATE").required(false).index(4))
                 )
                 .subcommand(
                     Command::new("deposit")
