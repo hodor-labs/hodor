@@ -64,22 +64,18 @@ fn main() {
         );
     let matches = cmd.get_matches();
 
-    // todo: argument to override config file path
-    // todo: try first '~/.config/hodor/cli/config.yml'
     let config_file = solana_cli_config::CONFIG_FILE.as_ref().unwrap();
     let cli_config = Config::load(config_file).unwrap();
 
-    // todo: respect commitment level out of config
     let rpc_client = RpcClient::new_with_commitment(
         &cli_config.json_rpc_url, CommitmentConfig::processed());
 
-    // todo: parametrized through arg
     let program_id = hodor_program::id();
 
     let context = Context {
         cli_config,
         rpc_client,
-        commitment: CommitmentConfig::processed(), // todo: parametrize it or/and read from CLI config
+        commitment: CommitmentConfig::processed(),
         program_id,
     };
 
