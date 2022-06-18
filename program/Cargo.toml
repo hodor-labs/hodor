@@ -6,7 +6,7 @@ description = "Hodor program"
 edition = "2021"
 keywords = ["solana", "hodor", "program"]
 license = "Apache-2.0"
-publish = false
+repository = "https://github.com/hodor-labs/hodor"
 
 [features]
 no-entrypoint = []
