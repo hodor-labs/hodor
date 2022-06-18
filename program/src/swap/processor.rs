@@ -277,6 +277,10 @@ fn process_swap(program_id: &Pubkey, accounts: &[AccountInfo], in_amount: u64, m
         return Err(IllegalOwner);
     }
 
+    if in_amount == 0 {
+        return Err(InvalidInstructionData);
+    }
+
     let mut swap_pool_state = SwapPool::unpack(&swap_pool_state_info.try_borrow_data()?)?;
 
     // todo: this conditions need to be unit tested
@@ -308,7 +312,7 @@ fn process_swap(program_id: &Pubkey, accounts: &[AccountInfo], in_amount: u64, m
             .map_or(0, |cf| cf.rate),
     ).ok_or(InvalidInstructionData)?;
 
-    if out_amount < min_out_amount {
+    if out_amount < min_out_amount || out_amount == 0 {
         // todo: add custom error message
         return Err(InvalidInstructionData);
     }

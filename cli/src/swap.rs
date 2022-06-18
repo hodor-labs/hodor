@@ -176,17 +176,39 @@ pub fn print_info(context: Context, matches: &ArgMatches) -> Result<(), Error> {
     println!("Token A:");
     println!("MINT: {}", token_acc_a.mint);
     println!("Account: {}", pool_state.token_account_a);
-    println!("Balance: {}", token_acc_a.token_amount.ui_amount_string);
+    println!("Balance: {}", amount_to_ui_amount(pool_state.balance_a, token_acc_a.token_amount.decimals));
     println!();
     println!("Token B:");
     println!("MINT: {}", token_acc_b.mint);
     println!("Account: {}", pool_state.token_account_b);
-    println!("Balance: {}", token_acc_b.token_amount.ui_amount_string);
+    println!("Balance: {}", amount_to_ui_amount(pool_state.balance_b, token_acc_b.token_amount.decimals));
     println!();
     println!("LP MINT: {}", pool_state.lp_mint);
-    /* todo
-    println!("Fee: 0%");
-    println!("Ratio: 1/0.34 == 0.34/1");*/
+    println!();
+
+    let creator_fee = pool_state.creator_fee.as_ref().map_or(0, |cf| cf.rate);
+    let total_fee = pool_state.lp_fee_rate
+        .checked_add(50_000).unwrap() // dao 0.05% - todo: read from config acc
+        .checked_add(creator_fee).unwrap();
+
+    let fee_rate_divider = 1_000_000.0;
+
+    println!("Fee: {}% (LP: {}%, DAO: {}%, creator: {}%)",
+             (total_fee as f64 / fee_rate_divider),
+             (pool_state.lp_fee_rate as f64 / fee_rate_divider),
+             (50_000 as f64 / fee_rate_divider),
+             (creator_fee as f64 / fee_rate_divider),
+    );
+
+    if let Some(creator_fee) = &pool_state.creator_fee {
+        println!();
+        println!("Creator:");
+        println!("Uncollected fees: A: {}, B: {}",
+                 amount_to_ui_amount(creator_fee.balance_a, token_acc_a.token_amount.decimals),
+                 amount_to_ui_amount(creator_fee.balance_b, token_acc_b.token_amount.decimals)
+        );
+        println!("Withdraw authority: {}", creator_fee.withdraw_authority);
+    }
 
     Ok(())
 }
@@ -262,7 +284,7 @@ pub fn swap(context: Context, matches: &ArgMatches) -> Result<(), Error> {
         50_000, // hardcoded 0.05% - needs to be read from config acc
         pool_state.lp_fee_rate,
         pool_state.creator_fee.as_ref()
-            .map_or(0, |cf| cf.rate)
+            .map_or(0, |cf| cf.rate),
     ).ok_or(format!("Failed to calculate expected swap out amount"))?;
 
     // todo: slippage control through CLI, for now hardcoded 1%
