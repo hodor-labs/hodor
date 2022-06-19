@@ -75,7 +75,6 @@ pub enum SwapInstruction {
     // 1-5 WithdrawCreatorFee
 }
 
-// todo: unit test pack/unpack swap instruction
 impl SwapInstruction {
     const MODULE_TAG: u8 = 1;
 
