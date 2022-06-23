@@ -13,11 +13,19 @@ pub struct Context {
     pub rpc_client: RpcClient,
     pub commitment: CommitmentConfig,
     pub program_id: Pubkey,
+    pub assume_yes: bool,
 }
 
 fn main() {
     let cmd = Command::new("hodor")
         .bin_name("hodor")
+        .arg(
+            Arg::with_name("assume-yes")
+                .long("assume-yes")
+                .short('y')
+                .global(true)
+                .help("Automatic yes to prompts. Assume \"yes\" as answer to all prompts and run non-interactively."),
+        )
         .subcommand_required(true)
         .subcommand(
             Command::new("swap")
@@ -77,6 +85,7 @@ fn main() {
         rpc_client,
         commitment: CommitmentConfig::processed(),
         program_id,
+        assume_yes: matches.is_present("assume-yes")
     };
 
     let result = match matches.subcommand() {

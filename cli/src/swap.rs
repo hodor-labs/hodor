@@ -294,8 +294,8 @@ pub fn swap(context: Context, matches: &ArgMatches) -> Result<(), Error> {
 
     println!("Expected received token amount: {}",
              amount_to_ui_amount(expected_out_amount, out_source_acc.token_amount.decimals));
-
-    if !Confirm::with_theme(&ColorfulTheme::default())
+    
+    if !context.assume_yes && !Confirm::with_theme(&ColorfulTheme::default())
         .with_prompt("Do you want to execute transaction?")
         .interact()
         .unwrap() {
