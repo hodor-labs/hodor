@@ -12,9 +12,9 @@ repository = "https://github.com/hodor-labs/hodor"
 no-entrypoint = []
 
 [dependencies]
-solana-program = "1.10.26"
-spl-token = { version = "3.3.0", features = ["no-entrypoint"] }
-arrayref = "0.3.6"
+solana-program = "=1.10.27"
+spl-token = { version = "=3.3.0", features = ["no-entrypoint"] }
+arrayref = "=0.3.6"
 
 [lib]
 crate-type = ["cdylib", "lib"]

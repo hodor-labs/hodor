@@ -8,14 +8,14 @@ keywords = ["solana", "hodor", "cli"]
 license = "Apache-2.0"
 
 [dependencies]
-bs58 = "0.4.0"
-clap = { version = "3.1.18", features = ["cargo"] }
-solana-account-decoder = "1.10.26"
-solana-cli-config = "1.10.26"
-solana-client = "1.10.26"
-solana-clap-utils = "1.10.26"
-solana-sdk = "1.10.26"
-solana-program = "1.10.26"
-spl-associated-token-account = { version = "1.0.5", features = ["no-entrypoint"] }
-spl-token = { version = "3.3.0", features = ["no-entrypoint"] }
+bs58 = "=0.4.0"
+clap = { version = "=3.2.6", features = ["cargo"] }
+solana-account-decoder = "=1.10.27"
+solana-cli-config = "=1.10.27"
+solana-client = "=1.10.27"
+solana-clap-utils = "=1.10.27"
+solana-sdk = "=1.10.27"
+solana-program = "=1.10.27"
+spl-associated-token-account = { version = "=1.0.5", features = ["no-entrypoint"] }
+spl-token = { version = "=3.3.0", features = ["no-entrypoint"] }
 hodor-program = { version = "0.1.0", path = "../program", features = ["no-entrypoint"] }
