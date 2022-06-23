@@ -10,6 +10,7 @@ license = "Apache-2.0"
 [dependencies]
 bs58 = "=0.4.0"
 clap = { version = "=3.2.6", features = ["cargo"] }
+dialoguer = "=0.10.1"
 solana-account-decoder = "=1.10.27"
 solana-cli-config = "=1.10.27"
 solana-client = "=1.10.27"

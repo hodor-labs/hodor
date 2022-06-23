@@ -1,5 +1,7 @@
 use std::str::FromStr;
 use clap::ArgMatches;
+use dialoguer::Confirm;
+use dialoguer::theme::ColorfulTheme;
 use solana_account_decoder::parse_token::UiTokenAccount;
 use solana_program::instruction::{AccountMeta, Instruction};
 use solana_program::pubkey::Pubkey;
@@ -293,7 +295,12 @@ pub fn swap(context: Context, matches: &ArgMatches) -> Result<(), Error> {
     println!("Expected received token amount: {}",
              amount_to_ui_amount(expected_out_amount, out_source_acc.token_amount.decimals));
 
-    // todo: Prompt to accept expected amount
+    if !Confirm::with_theme(&ColorfulTheme::default())
+        .with_prompt("Do you want to execute transaction?")
+        .interact()
+        .unwrap() {
+        return Ok(());
+    }
 
     let instruction = Instruction::new_with_bytes(
         context.program_id,
