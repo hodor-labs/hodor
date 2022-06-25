@@ -8,6 +8,7 @@
 
 ## Features
 - Constant product swap
+- Lending / Borrowing
 - Token lock with vesting
 - Staking
 - Trade escrow for tokens & NFTs
